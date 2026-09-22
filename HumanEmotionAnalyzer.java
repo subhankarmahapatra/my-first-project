@@ -32,6 +32,7 @@ public class HumanEmotionAnalyzer {
         emotionScores.forEach((k, v) -> System.out.printf("• %-10s : %.2f%n", k, v));
 
         System.out.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        System.out.println("------------------------------------");
 
         sc.close();
     }
