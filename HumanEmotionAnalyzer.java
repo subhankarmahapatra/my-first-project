@@ -64,6 +64,7 @@ public class HumanEmotionAnalyzer {
                 Map.entry("love", 2.5),
                 Map.entry("ecstatic", 3.5),
                 Map.entry("on top of the world", 4.0)
+                Map.entry(("loveable ", 4.2)
         )));
 
         // SADNESS
