@@ -124,6 +124,7 @@ public class HumanEmotionAnalyzer {
                 Map.entry("ecstatic", 3.5),
                 Map.entry("loveable", 4.2),
                 Map.entry("on top of the world", 4.0)
+                Map.entry("on love". 4.1)
         )));
 
 
