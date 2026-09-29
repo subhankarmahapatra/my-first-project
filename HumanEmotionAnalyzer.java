@@ -63,6 +63,7 @@ public class HumanEmotionAnalyzer {
         System.out.println(recommendation);
 
         System.out.println("\n📊 Emotional Weights:");
+        System.out.println("\n❤️ Loveable:"):
 
         emotionScores.entrySet()
                 .stream()
