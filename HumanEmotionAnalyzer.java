@@ -1,4 +1,3 @@
-
 import java.util.*;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -6,27 +5,28 @@ import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 import java.io.IOException;
 
-public class HumanEmotionAnalyzer {
+public class EmotionInsightEngine {
 
-    private static final Scanner SC = new Scanner(System.in);
-    private static final String HISTORY_FILE = "emotion_history.csv";
+    private static final Scanner INPUT = new Scanner(System.in);
+    private static final String LOG_FILE = "emotion_log.csv";
 
-    private static final DateTimeFormatter FORMATTER =
+    private static final DateTimeFormatter DATE_FORMAT =
             DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
 
-    private static final Map<String, Double> POSITIVE_WORDS =
-            createWeights(new String[]{
+    // Weighted dictionaries
+    private static final Map<String, Double> POSITIVE =
+            assignWeights(new String[]{
                 "happy", "joy", "amazing", "love", "grateful",
                 "excited", "good", "great", "wonderful", "hopeful"
-            }, 7.0);
+            }, 6.5);
 
-    private static final Map<String, Double> NEGATIVE_WORDS =
-            createWeights(new String[]{
+    private static final Map<String, Double> NEGATIVE =
+            assignWeights(new String[]{
                 "sad", "hurt", "pain", "angry", "lonely",
                 "depressed", "bad", "terrible", "upset", "miserable"
-            }, -7.0);
+            }, -6.5);
 
-    private static final Set<String> NEGATIONS = new HashSet<>(
+    private static final Set<String> NEGATION_WORDS = new HashSet<>(
             Arrays.asList(
                 "not", "no", "never", "without", "isn't",
                 "wasn't", "aren't", "don't", "didn't",
@@ -36,93 +36,78 @@ public class HumanEmotionAnalyzer {
     );
 
     public static void main(String[] args) {
-
         System.out.println("========================================");
-        System.out.println("   HUMAN EMOTION ANALYZER - JAVA");
+        System.out.println("        EMOTION INSIGHT ENGINE");
         System.out.println("========================================");
-        System.out.println("Analyze feelings using keyword-based rules.");
-        System.out.println();
+        System.out.println("Keyword-based emotional analysis tool.\n");
 
         while (true) {
             System.out.print("Enter your feelings (or type 'exit'): ");
+            String text = INPUT.nextLine().trim().toLowerCase(Locale.ROOT);
 
-            String input = SC.nextLine().trim().toLowerCase(Locale.ROOT);
-
-            if (input.equals("exit")) {
-                System.out.println("Thank you for using Emotion Analyzer!");
+            if (text.equals("exit")) {
+                System.out.println("Session ended. Stay mindful!");
                 break;
             }
 
-            if (input.isEmpty()) {
-                System.out.println("Please enter some text.\n");
+            if (text.isEmpty()) {
+                System.out.println("⚠ Please enter some text.\n");
                 continue;
             }
 
-            analyzeAndDisplay(input);
+            runAnalysis(text);
         }
 
-        SC.close();
+        INPUT.close();
     }
 
-    // Main analysis workflow
-    public static void analyzeAndDisplay(String input) {
+    // Core analysis workflow
+    private static void runAnalysis(String text) {
+        Map<String, Double> emotionMap = evaluateEmotions(text);
+        String dominantEmotion = findDominantEmotion(emotionMap);
+        double sentimentScore = computeSentiment(text);
+        double intensityLevel = computeIntensity(emotionMap);
+        String moodCategory = classifyMood(sentimentScore);
+        String timeStamp = LocalDateTime.now().format(DATE_FORMAT);
 
-        Map<String, Double> emotionScores = analyzeEmotion(input);
-        String primaryEmotion = getPrimaryEmotion(emotionScores);
-        double sentiment = calculateSentiment(input);
-        double intensity = calculateIntensity(emotionScores);
-        String mood = getMoodLevel(sentiment);
-        String timestamp = LocalDateTime.now().format(FORMATTER);
+        System.out.println("\n========== RESULT ==========");
+        System.out.println("Dominant Emotion    : " + dominantEmotion);
+        System.out.printf(Locale.ROOT, "Sentiment Score     : %.1f / 100%n", sentimentScore);
+        System.out.printf(Locale.ROOT, "Intensity Level     : %.1f%%%n", intensityLevel);
+        System.out.println("Mood Category       : " + moodCategory);
+        System.out.println("Keywords Found      : " + extractKeywords(text));
+        System.out.println("Reflection          : " + buildReflection(dominantEmotion));
+        System.out.println("Suggestion          : " + buildSuggestion(dominantEmotion));
+        System.out.println("Analyzed At         : " + timeStamp);
 
-        System.out.println("\n========== ANALYSIS RESULT ==========");
-        System.out.println("Primary Emotion     : " + primaryEmotion);
-        System.out.printf(Locale.ROOT,
-                "Sentiment Score     : %.1f / 100%n", sentiment);
-        System.out.printf(Locale.ROOT,
-                "Emotional Intensity : %.1f%%%n", intensity);
-        System.out.println("Mood Level          : " + mood);
-        System.out.println("Keywords Detected   : " + detectImportantWords(input));
-        System.out.println("Reflection          : " + generateReflection(primaryEmotion));
-        System.out.println("Recommendation      : " + generateRecommendation(primaryEmotion));
-        System.out.println("Analysis Time       : " + timestamp);
-
-        System.out.println("\n---------- Emotion Weights ----------");
-
-        emotionScores.entrySet()
-                .stream()
+        System.out.println("\n------ Emotion Breakdown ------");
+        emotionMap.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .forEach(entry -> System.out.printf(
-                        Locale.ROOT, "%-12s : %.2f%n",
-                        entry.getKey(), entry.getValue()));
+                .forEach(entry -> System.out.printf("%-12s : %.2f%n", entry.getKey(), entry.getValue()));
 
-        showEmotionDistribution(emotionScores);
+        showDistribution(emotionMap);
 
         try {
-            saveHistory(timestamp, input, primaryEmotion, sentiment, intensity, mood);
-            System.out.println("\nAnalysis saved to " + HISTORY_FILE);
+            saveLog(timeStamp, text, dominantEmotion, sentimentScore, intensityLevel, moodCategory);
+            System.out.println("\n✔ Analysis saved to " + LOG_FILE);
         } catch (IOException e) {
-            System.out.println("\nCould not save history: " + e.getMessage());
+            System.out.println("\n✘ Could not save log: " + e.getMessage());
         }
 
         System.out.println("======================================\n");
     }
 
-    // Create a weighted word dictionary
-    private static Map<String, Double> createWeights(
-            String[] words, double weight) {
-
-        Map<String, Double> result = new HashMap<>();
-
+    // Assign weights to words
+    private static Map<String, Double> assignWeights(String[] words, double weight) {
+        Map<String, Double> map = new HashMap<>();
         for (String word : words) {
-            result.put(word, weight);
+            map.put(word, weight);
         }
-
-        return Collections.unmodifiableMap(result);
+        return Collections.unmodifiableMap(map);
     }
 
-    // Analyze five emotion categories
-    public static Map<String, Double> analyzeEmotion(String text) {
-
+    // Evaluate emotions
+    private static Map<String, Double> evaluateEmotions(String text) {
         Map<String, Double> scores = new LinkedHashMap<>();
 
         scores.put("Happiness", weightedCount(text, Map.of(
@@ -157,226 +142,78 @@ public class HumanEmotionAnalyzer {
         return scores;
     }
 
-    // Count weighted keywords, excluding negated keywords
-    public static double weightedCount(
-            String text, Map<String, Double> wordWeights) {
-
+    // Weighted keyword count
+    private static double weightedCount(String text, Map<String, Double> weights) {
         String[] words = tokenize(text);
         double score = 0;
-
         for (int i = 0; i < words.length; i++) {
-            Double weight = wordWeights.get(words[i]);
-
+            Double weight = weights.get(words[i]);
             if (weight != null && !isNegated(words, i)) {
                 score += weight;
             }
         }
-
         return score;
     }
 
-    // Simple negation detection using the preceding three tokens
-    public static boolean isNegated(String[] words, int index) {
-
+    // Negation detection
+    private static boolean isNegated(String[] words, int index) {
         for (int i = Math.max(0, index - 3); i < index; i++) {
-            if (NEGATIONS.contains(words[i])) {
-                return true;
-            }
+            if (NEGATION_WORDS.contains(words[i])) return true;
         }
-
         return false;
     }
 
-    // Tokenize words and common contractions
+    // Tokenizer
     private static String[] tokenize(String text) {
-        return text.toLowerCase(Locale.ROOT)
-                .split("[^a-z']+");
+        return text.toLowerCase(Locale.ROOT).split("[^a-z']+");
     }
 
-    // Find the strongest emotion, or Neutral if no keywords match
-    public static String getPrimaryEmotion(
-            Map<String, Double> scores) {
-
-        return scores.entrySet()
-                .stream()
-                .filter(entry -> entry.getValue() > 0)
+    // Find dominant emotion
+    private static String findDominantEmotion(Map<String, Double> scores) {
+        return scores.entrySet().stream()
+                .filter(e -> e.getValue() > 0)
                 .max(Map.Entry.comparingByValue())
                 .map(Map.Entry::getKey)
                 .orElse("Neutral");
     }
 
-    // Calculate a rule-based sentiment score from 0 to 100
-    public static double calculateSentiment(String text) {
-
+    // Sentiment calculation
+    private static double computeSentiment(String text) {
         String[] words = tokenize(text);
         double score = 50.0;
-
         for (int i = 0; i < words.length; i++) {
-            Double value = POSITIVE_WORDS.get(words[i]);
-
-            if (value == null) {
-                value = NEGATIVE_WORDS.get(words[i]);
-            }
-
-            if (value != null) {
-                if (isNegated(words, i)) {
-                    score -= value;
-                } else {
-                    score += value;
-                }
+            Double val = POSITIVE.get(words[i]);
+            if (val == null) val = NEGATIVE.get(words[i]);
+            if (val != null) {
+                score += isNegated(words, i) ? -val : val;
             }
         }
-
         return Math.max(0.0, Math.min(100.0, score));
     }
 
-    // Calculate intensity from matched emotion weights
-    public static double calculateIntensity(
-            Map<String, Double> scores) {
-
-        double total = scores.values()
-                .stream()
-                .mapToDouble(Double::doubleValue)
-                .sum();
-
+    // Intensity calculation
+    private static double computeIntensity(Map<String, Double> scores) {
+        double total = scores.values().stream().mapToDouble(Double::doubleValue).sum();
         return Math.min(total * 8.0, 100.0);
     }
 
-    // Classify sentiment score
-    public static String getMoodLevel(double sentiment) {
-
+    // Mood classification
+    private static String classifyMood(double sentiment) {
         if (sentiment >= 80) return "Extremely Positive";
         if (sentiment >= 65) return "Positive";
         if (sentiment >= 45) return "Neutral";
         if (sentiment >= 25) return "Negative";
-
         return "Very Negative";
     }
 
-    // Display each emotion's share of all matched weights
-    public static void showEmotionDistribution(
-            Map<String, Double> scores) {
-
-        double total = scores.values()
-                .stream()
-                .mapToDouble(Double::doubleValue)
-                .sum();
-
-        System.out.println("\n------ Emotion Distribution ------");
-
+    // Distribution display
+    private static void showDistribution(Map<String, Double> scores) {
+        double total = scores.values().stream().mapToDouble(Double::doubleValue).sum();
+        System.out.println("\n------ Distribution ------");
         if (total <= 0) {
             System.out.println("No emotion keywords detected.");
             return;
         }
-
         scores.forEach((emotion, score) -> {
-            double percentage = score / total * 100.0;
-
-            System.out.printf(Locale.ROOT,
-                    "%-12s : %5.1f%%%n", emotion, percentage);
-        });
-    }
-
-    // Find recognized emotion-related words
-    public static String detectImportantWords(String text) {
-
-        Set<String> importantWords = new LinkedHashSet<>(
-                Arrays.asList(
-                    "happy", "sad", "love", "angry", "excited",
-                    "hurt", "pain", "scared", "worried", "joy",
-                    "anxious", "lonely", "grateful", "frustrated"
-                )
-        );
-
-        Set<String> found = new LinkedHashSet<>();
-
-        for (String word : tokenize(text)) {
-            if (importantWords.contains(word)) {
-                found.add(word);
-            }
-        }
-
-        return found.isEmpty()
-                ? "No recognized emotional keywords"
-                : String.join(", ", found);
-    }
-
-    // Generate a reflection
-    public static String generateReflection(String emotion) {
-
-        switch (emotion) {
-            case "Happiness":
-                return "Your words include positive or uplifting signals.";
-            case "Sadness":
-                return "Your words include signals associated with sadness.";
-            case "Anger":
-                return "Your words include signals associated with frustration.";
-            case "Fear":
-                return "Your words include signals associated with worry.";
-            case "Love":
-                return "Your words include signals associated with affection.";
-            default:
-                return "No dominant emotion was identified by the keyword rules.";
-        }
-    }
-
-    // Generate a general recommendation
-    public static String generateRecommendation(String emotion) {
-
-        switch (emotion) {
-            case "Happiness":
-                return "Notice what is going well and enjoy the moment.";
-            case "Sadness":
-                return "Consider talking with someone you trust or doing a comforting activity.";
-            case "Anger":
-                return "Pause, take a few slow breaths, and consider your next step.";
-            case "Fear":
-                return "Identify what is within your control and take one manageable step.";
-            case "Love":
-                return "Consider expressing appreciation to someone important to you.";
-            default:
-                return "Reflect on your feelings and describe them in more detail if helpful.";
-        }
-    }
-
-    // Save analysis history to CSV
-    public static void saveHistory(
-            String timestamp,
-            String input,
-            String emotion,
-            double sentiment,
-            double intensity,
-            String mood) throws IOException {
-
-        Path path = Paths.get(HISTORY_FILE);
-        boolean needsHeader =
-                !Files.exists(path) || Files.size(path) == 0;
-
-        try (java.io.BufferedWriter writer = Files.newBufferedWriter(
-                path,
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND)) {
-
-            if (needsHeader) {
-                writer.write(
-                    "Timestamp,Input,Primary Emotion,Sentiment,Intensity,Mood");
-                writer.newLine();
-            }
-
-            writer.write(csv(timestamp) + ","
-                    + csv(input) + ","
-                    + csv(emotion) + ","
-                    + sentiment + ","
-                    + intensity + ","
-                    + csv(mood));
-
-            writer.newLine();
-        }
-    }
-
-    // Escape values according to basic CSV quoting rules
-    private static String csv(String value) {
-        return "\"" + value.replace("\"", "\"\"") + "\"";
-    }
-}
+            double percent = score / total * 100.0;
+            System.out.printf("%-12s : %5.1f%%%
