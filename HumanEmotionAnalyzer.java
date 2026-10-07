@@ -47,7 +47,7 @@ import java.io.IOException;
  * 31.  Average intensity
  * 32.  Most frequent emotion
  * 33.  Trend analysis
- * 34.  Session statistics
+ * 34.  Session statistic
  * 35.  Text report export
  * 36.  Clear history
  * 37.  Help
@@ -109,6 +109,7 @@ public class EmotionInsightEngine {
             "hardly",
             "neither",
             "nor"
+            "nothing"
     );
 
     // =========================================================
@@ -131,7 +132,7 @@ public class EmotionInsightEngine {
                     Map.entry("super", 1.6),
                     Map.entry("quite", 1.2),
                     Map.entry("truly", 1.4),
-                    Map.entry("extremely", 2.0)
+                    Map.entry("extremely", 2.1)
             );
 
     // =========================================================
