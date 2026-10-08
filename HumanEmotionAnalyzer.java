@@ -98,6 +98,7 @@ public class EmotionInsightEngine {
             "isn't",
             "wasn't",
             "aren't",
+            "do not"
             "don't",
             "didn't",
             "can't",
