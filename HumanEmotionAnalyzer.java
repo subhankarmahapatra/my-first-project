@@ -127,7 +127,7 @@ public class EmotionInsightEngine {
                     Map.entry("too", 1.4),
                     Map.entry("absolutely", 1.7),
                     Map.entry("totally", 1.6),
-                    Map.entry("completely", 1.7),
+                    Map.entry("completely", 1.6),
                     Map.entry("deeply", 1.7),
                     Map.entry("highly", 1.5),
                     Map.entry("super", 1.6),
