@@ -196,7 +196,7 @@ public class EmotionInsightEngine {
                     Map.entry("optimistic", 6.0),
                     Map.entry("peace", 5.0),
                     Map.entry("relief", 5.0),
-                    Map.entry("relieved", 5.0)
+                    Map.entry("relieved", 4.8)
             );
 
     // =========================================================
