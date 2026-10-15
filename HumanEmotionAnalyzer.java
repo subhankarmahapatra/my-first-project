@@ -206,7 +206,124 @@ public class EmotionInsightEngine {
     private static String csv(String s){return "\""+s.replace("\"","\"\"")+"\"";}
     private static List<String> readRows(){try{if(!Files.exists(LOG))return new ArrayList<>();return Files.readAllLines(LOG,StandardCharsets.UTF_8);}catch(IOException e){System.out.println("Read error: "+e.getMessage());return new ArrayList<>();}}
     private static void history(){List<String> rows=readRows();if(rows.size()<=1){System.out.println("No saved analyses yet.");return;}int start=Math.max(1,rows.size()-11);for(int i=start;i<rows.size();i++)System.out.println(rows.get(i));}
-    private static void stats(){List<String> rows=readRows();if(rows.size()<=1){System.out.println("No data yet.");return;}int pos=0,neg=0,neu=0;double total=0;Map<String,Integer> counts=new TreeMap<>();for(int i=1;i<rows.size();i++){String[] c=parseCsv(rows.get(i));if(c.length<4)continue;try{double sc=Double.parseDouble(c[2]);total+=sc;if(sc>1)pos++;else if(sc< -1)neg++;else neu++;counts.put(c[3],counts.getOrDefault(c[3],0)+1);}catch(Exception ignored){}}int n=pos+neg+neu;System.out.println("Saved analyses: "+n+" | Positive: "+pos+" | Negative: "+neg+" | Neutral: "+neu);if(n>0)System.out.println("Average sentiment score: "+round(total/n));System.out.println("Primary emotion counts: "+counts);}
-    private static void trend(){List<String> rows=readRows();if(rows.size()<=1){System.out.println("No data yet.");return;}int start=Math.max(1,rows.size()-8);System.out.println("Recent sentiment trend (latest 7 records):");for(int i=start;i<rows.size();i++){String[] c=parseCsv(rows.get(i));if(c.length<3)continue;try{double v=Double.parseDouble(c[2]);System.out.printf("%s | %6.1f | %s%n",c[0],v,bar(v));}catch(Exception ignored){}}}
+    
+    private static void stats(){
+        List<String> rows=readRows();
+        if(rows.size()<=1){System.out.println("No data yet.");return;}
+        int pos=0,neg=0,neu=0;double total=0;Map<String,Integer> counts=new TreeMap<>();
+        for(int i=1;i<rows.size();i++){
+            String[] c=parseCsv(rows.get(i));
+            if(c.length<4)continue;
+            try{
+                double sc=Double.parseDouble(c[2]);
+                total+=sc;
+                if(sc>1)pos++;else if(sc< -1)neg++;else neu++;
+                counts.put(c[3],counts.getOrDefault(c[3],0)+1);
+            }catch(Exception ignored){}
+        }
+        int n=pos+neg+neu;
+        System.out.println("Saved analyses: "+n+" | Positive: "+pos+" | Negative: "+neg+" | Neutral: "+neu);
+        if(n>0)System.out.println("Average sentiment score: "+round(total/n));
+        System.out.println("Primary emotion counts: "+counts);
+    }
+    
+    private static void trend(){
+        List<String> rows=readRows();
+        if(rows.size()<=1){System.out.println("No data yet.");return;}
+        int start=Math.max(1,rows.size()-8);
+        System.out.println("Recent sentiment trend (latest 7 records):");
+        for(int i=start;i<rows.size();i++){
+            String[] c=parseCsv(rows.get(i));
+            if(c.length<3)continue;
+            try{
+                double v=Double.parseDouble(c[2]);
+                System.out.printf("%s | %6.1f | %s%n",c[0],v,bar(v));
+            }catch(Exception ignored){}
+        }
+    }
+    
     private static String bar(double v){int n=(int)Math.round(Math.abs(v)/5);char ch=v>1?'+':v< -1?'-':'=';StringBuilder b=new StringBuilder();for(int i=0;i<n;i++)b.append(ch);return b.toString();}
-    private static void search(){System.out.print("Search text > ");String q=IN.nextLine().trim().toLowerCase(Locale.ROOT);if(q.isEmpty())return;int found=0;List<String> rows=readRows();for(int i=1;i<rows.size();i++)if(rows.get(i).toLowerCase(Locale.ROOT).contains(q)){System.out.println
+    
+    private static void search() {
+        System.out.print("Search text > ");
+        String q = IN.nextLine().trim().toLowerCase(Locale.ROOT);
+        if (q.isEmpty()) return;
+        int found = 0;
+        List<String> rows = readRows();
+        for (int i = 1; i < rows.size(); i++) {
+            if (rows.get(i).toLowerCase(Locale.ROOT).contains(q)) {
+                System.out.println(rows.get(i));
+                found++;
+            }
+        }
+        System.out.println("Found " + found + " matching records.");
+    }
+
+    private static void report() {
+        try {
+            List<String> rows = readRows();
+            Files.write(REPORT, rows, StandardCharsets.UTF_8);
+            System.out.println("Data exported successfully to " + REPORT.toAbsolutePath());
+        } catch (IOException e) {
+            System.out.println("Failed to write report: " + e.getMessage());
+        }
+    }
+
+    private static void clearHistory() {
+        try {
+            Files.deleteIfExists(LOG);
+            sessionCount = 0;
+            sessionTotal = 0.0;
+            System.out.println("Analysis history cleared.");
+            ensureLog();
+        } catch (IOException e) {
+            System.out.println("Failed to clear history: " + e.getMessage());
+        }
+    }
+
+    private static void sessionSummary() {
+        System.out.println("\n=== Session Summary ===");
+        System.out.println("Analyses performed this session: " + sessionCount);
+        if (sessionCount > 0) {
+            System.out.println("Average sentiment score: " + round(sessionTotal / sessionCount));
+        }
+        System.out.println("=======================");
+    }
+
+    private static int count(String s, char target) {
+        int count = 0;
+        for (char c : s.toCharArray()) if (c == target) count++;
+        return count;
+    }
+
+    private static boolean any(String text, String... targets) {
+        for (String target : targets) if (text.contains(target)) return true;
+        return false;
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static double round(double value) {
+        return Math.round(value * 10.0) / 10.0;
+    }
+
+    private static String[] parseCsv(String line) {
+        List<String> tokens = new ArrayList<>();
+        boolean inQuotes = false;
+        StringBuilder currentToken = new StringBuilder();
+        for (char c : line.toCharArray()) {
+            if (c == '\"') {
+                inQuotes = !inQuotes;
+            } else if (c == ',' && !inQuotes) {
+                tokens.add(currentToken.toString());
+                currentToken.setLength(0);
+            } else {
+                currentToken.append(c);
+            }
+        }
+        tokens.add(currentToken.toString());
+        return tokens.toArray(new String[0]);
+    }
+}
