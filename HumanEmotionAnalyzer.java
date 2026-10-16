@@ -332,3 +332,382 @@ public class EmotionInsightEngine {
 
         // NEW FEATURE 4: Tone & Pronoun Profiler
         r.pronounFocus = determinePronounF
+        r.pronounFocus = determinePronounFocus(firstP, collP, secondP);
+        r.toneStyle = determineToneStyle(r, questions, bangs, longWords);
+
+        r.suggestion = suggestion(r.sentiment, r.primary, r.stress);
+        if (words.isEmpty()) r.flags.add("No recognizable words found");
+        return r;
+    }
+
+    private static void detectDyads(Result r) {
+        checkDyad(r, "Happiness", "Trust", "Love / Deep Affection");
+        checkDyad(r, "Happiness", "Anticipation", "Optimism / Eagerness");
+        checkDyad(r, "Happiness", "Pride", "Triumph / Accomplishment");
+        checkDyad(r, "Trust", "Fear", "Submission / Compliance");
+        checkDyad(r, "Fear", "Surprise", "Awe / Alarm");
+        checkDyad(r, "Surprise", "Sadness", "Disapproval / Shock");
+        checkDyad(r, "Sadness", "Disgust", "Remorse / Self-Reproach");
+        checkDyad(r, "Disgust", "Anger", "Contempt / Cynicism");
+        checkDyad(r, "Anger", "Anticipation", "Aggressiveness / Drive");
+        checkDyad(r, "Fear", "Sadness", "Despair / Helplessness");
+        checkDyad(r, "Stress", "Fear", "Acute Panic / Overwhelm");
+        checkDyad(r, "Gratitude", "Calmness", "Mindful Contentment");
+        checkDyad(r, "Curiosity", "Hope", "Inspired Exploration");
+    }
+
+    private static void checkDyad(Result r, String e1, String e2, String dyadName) {
+        if (r.emotions.getOrDefault(e1, 0.0) > 0 && r.emotions.getOrDefault(e2, 0.0) > 0) {
+            r.dyads.add(dyadName + " (" + e1 + " + " + e2 + ")");
+        }
+    }
+
+    private static void detectCognitiveDistortions(String norm, Result r) {
+        for (Map.Entry<String, String[]> entry : COGNITIVE_PATTERNS.entrySet()) {
+            List<String> hits = new ArrayList<>();
+            for (String trigger : entry.getValue()) {
+                if (norm.contains(trigger)) {
+                    hits.add("'" + trigger + "'");
+                }
+            }
+            if (!hits.isEmpty()) {
+                r.cognitiveDistortions.add(entry.getKey() + " -> triggered by " + String.join(", ", hits));
+            }
+        }
+    }
+
+    private static void computeEmotionalArc(String text, Result r) {
+        String[] segments = text.split("(?i)(\\.+|!+|\\?+|;|\\bbut\\b|\\bhowever\\b|\\bkintu\\b|\\bhele\\b|\\band\\b)");
+        for (String seg : segments) {
+            String trimmed = seg.trim();
+            if (trimmed.isEmpty()) continue;
+            List<String> tks = tokens(trimmed.toLowerCase(Locale.ROOT));
+            if (tks.isEmpty()) continue;
+            double segScore = 0;
+            boolean neg = false;
+            for (String w : tks) {
+                if (NEGATIONS.contains(w) || w.endsWith("n't")) { neg = true; continue; }
+                Double s = SENTIMENT.get(w);
+                if (s != null) {
+                    segScore += neg ? -s : s;
+                    neg = false;
+                }
+            }
+            r.clauseScores.add(round(segScore));
+        }
+
+        if (r.clauseScores.size() <= 1) {
+            r.arcSummary = "Single-phase expression (Steady)";
+        } else {
+            double first = r.clauseScores.get(0);
+            double last = r.clauseScores.get(r.clauseScores.size() - 1);
+            if (first < 0 && last > 0) r.arcSummary = "Silver-Lining / Recovery Arc (Negative -> Positive)";
+            else if (first > 0 && last < 0) r.arcSummary = "Emotional Drop / Venting Arc (Positive -> Negative)";
+            else if (last > first + 1.5) r.arcSummary = "Upward Momentum (Increasingly Positive)";
+            else if (last < first - 1.5) r.arcSummary = "Downward Spiral (Increasingly Negative)";
+            else r.arcSummary = "Consistent / Flat Emotional Trajectory";
+        }
+    }
+
+    private static String determinePronounFocus(int firstP, int collP, int secondP) {
+        if (firstP == 0 && collP == 0 && secondP == 0) return "Impersonal / Objective";
+        if (firstP >= collP && firstP >= secondP) return "Self-Reflective ('I/Me' dominant: " + firstP + ")";
+        if (collP >= firstP && collP >= secondP) return "Collective / Social ('We/Us' dominant: " + collP + ")";
+        return "Direct / Interpersonal ('You' dominant: " + secondP + ")";
+    }
+
+    private static String determineToneStyle(Result r, int questions, int bangs, int longWords) {
+        if (r.intensity >= 65 || bangs >= 2) return "Expressive / High-Urgency";
+        if (questions >= 1 && r.emotions.getOrDefault("Curiosity", 0.0) > 0) return "Inquisitive / Exploratory";
+        if (r.words >= 8 && ((double) longWords / r.words) >= 0.25) return "Analytical / Detailed";
+        if (r.emotions.getOrDefault("Confidence", 0.0) > 0 || r.emotions.getOrDefault("Pride", 0.0) > 0) return "Assertive / Assured";
+        if (r.emotions.getOrDefault("Confusion", 0.0) > 0) return "Hesitant / Uncertain";
+        return "Conversational / Reflective";
+    }
+
+    private static List<String> tokens(String s) {
+        List<String> a = new ArrayList<>();
+        Matcher m = TOKEN.matcher(s);
+        while (m.find()) a.add(m.group().replace('’', '\''));
+        return a;
+    }
+
+    private static void bump(Result r, String e, double n) {
+        if (r.emotions.containsKey(e)) r.emotions.put(e, r.emotions.get(e) + n);
+    }
+
+    private static double indicator(Result r, String... names) {
+        double n = 0;
+        for (String s : names) n += Math.max(0, r.emotions.getOrDefault(s, 0.0));
+        return clamp(n * 12, 0, 100);
+    }
+
+    private static String mood(String s, String e, double i) {
+        if (s.equals("Positive")) return i >= 60 ? "Radiant / Strongly Positive" : "Positive / Hopeful";
+        if (s.equals("Negative")) return i >= 60 ? "Distressed / High Negative Signals" : "Low Mood / Subdued";
+        return e.equals("Mixed / Undetected") ? "Neutral / Composed" : "Mixed / Emotionally Nuanced";
+    }
+
+    private static String suggestion(String s, String e, double stress) {
+        if (stress >= 50) {
+            return "High stress clues detected. Type 'breathe' to run a 30-second guided calming exercise.";
+        }
+        switch (e) {
+            case "Stress": case "Fear": case "Anger":
+                return "Pause, slow your breathing, and break the challenge into one small step you can control.";
+            case "Sadness": case "Loneliness":
+                return "Reach out to someone you trust or do one gentle, comforting activity for yourself.";
+            case "Confusion":
+                return "Write down what is known vs. assumed to clear mental fog.";
+            case "Happiness": case "Gratitude": case "Hope":
+                return "Savor this moment! Note what sparked this feeling so you can revisit it later.";
+            case "Confidence": case "Pride":
+                return "Channel this momentum into your next meaningful goal.";
+            default:
+                return s.equals("Negative")
+                    ? "Take a short break and focus on one practical action that supports your wellbeing."
+                    : "Reflect on the underlying need or intention behind your words.";
+        }
+    }
+
+    private static void analyzeAndSave(String text) {
+        Result r = analyze(text);
+        printResult(r);
+        append(r);
+        sessionCount++;
+        sessionTotal += r.score;
+    }
+
+    private static void printResult(Result r) {
+        System.out.println("\n==================== ANALYSIS RESULT ====================");
+        System.out.println("Time:            " + LocalDateTime.parse(r.timestamp, TS).format(DISPLAY));
+        System.out.println("Sentiment:       " + r.sentiment + " | Score: " + round(r.score) + " (-100 to +100)");
+        System.out.println("Thermometer:     " + renderThermometer(r.score));
+        System.out.println("Primary Emotion: " + r.primary + " | Mood: " + r.mood);
+        System.out.println("Intensity:       " + round(r.intensity) + "/100 | Confidence: " + round(r.confidence) + "/100");
+        System.out.println("Stress Clues:    " + round(r.stress) + "/100 | Anxiety Clues: " + round(r.anxiety) + "/100");
+        System.out.println("Tone Style:      " + r.toneStyle + " | Focus: " + r.pronounFocus);
+        System.out.println("Emotional Arc:   " + r.arcSummary + " " + r.clauseScores);
+        System.out.println("Length:          " + r.words + " words | " + r.chars + " characters");
+
+        System.out.println("\nTop Emotions Breakdown:");
+        List<Map.Entry<String, Double>> active = r.emotions.entrySet().stream()
+            .filter(e -> e.getValue() > 0)
+            .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
+            .limit(5)
+            .collect(Collectors.toList());
+
+        if (active.isEmpty()) {
+            System.out.println("  (No specific emotion keywords triggered)");
+        } else {
+            for (Map.Entry<String, Double> e : active) {
+                int bars = (int) Math.min(20, Math.round(e.getValue() * 3));
+                System.out.printf("  - %-15s : %4.1f | %s%n", e.getKey(), e.getValue(), repeat('#', bars));
+            }
+        }
+
+        if (!r.dyads.isEmpty()) {
+            System.out.println("\nComplex Emotion Dyads (Plutchik Model):");
+            for (String d : r.dyads) System.out.println("  * " + d);
+        }
+
+        if (!r.cognitiveDistortions.isEmpty()) {
+            System.out.println("\nCognitive Pattern Alerts (CBT Heuristics):");
+            for (String cd : r.cognitiveDistortions) System.out.println("  ! " + cd);
+        }
+
+        System.out.println("\nMatched Lexicon: " + (r.keywords.isEmpty() ? "none" : String.join(", ", r.keywords)));
+        if (!r.flags.isEmpty()) {
+            System.out.println("Diagnostic Notes:");
+            for (String f : r.flags) System.out.println("  - " + f);
+        }
+        System.out.println("\nActionable Insight: " + r.suggestion);
+        System.out.println("=========================================================");
+    }
+
+    private static String renderThermometer(double score) {
+        int totalWidth = 24;
+        int mid = totalWidth / 2;
+        int pos = (int) Math.round(((score + 100.0) / 200.0) * totalWidth);
+        pos = Math.max(0, Math.min(totalWidth, pos));
+        StringBuilder sb = new StringBuilder("[-100 ");
+        for (int i = 0; i <= totalWidth; i++) {
+            if (i == pos) sb.append("O");
+            else if (i == mid) sb.append("|");
+            else if (i < mid && i >= pos) sb.append("-");
+            else if (i > mid && i <= pos) sb.append("+");
+            else sb.append(".");
+        }
+        sb.append(" +100]");
+        return sb.toString();
+    }
+
+    private static void compareTexts() {
+        System.out.print("Enter Text A (e.g., original thought/draft) > ");
+        String textA = IN.nextLine().trim();
+        System.out.print("Enter Text B (e.g., revised thought/draft)  > ");
+        String textB = IN.nextLine().trim();
+        if (textA.isEmpty() || textB.isEmpty()) {
+            System.out.println("Both texts are required for comparison.");
+            return;
+        }
+        Result a = analyze(textA);
+        Result b = analyze(textB);
+        System.out.println("\n================ SIDE-BY-SIDE COMPARISON ================");
+        System.out.printf("%-22s | %-24s | %-24s%n", "Metric", "Text A", "Text B");
+        System.out.println("-------------------------------------------------------------------------");
+        System.out.printf("%-22s | %-24s | %-24s%n", "Sentiment", a.sentiment + " (" + round(a.score) + ")", b.sentiment + " (" + round(b.score) + ")");
+        System.out.printf("%-22s | %-24s | %-24s%n", "Primary Emotion", a.primary, b.primary);
+        System.out.printf("%-22s | %-24s | %-24s%n", "Intensity", round(a.intensity) + "/100", round(b.intensity) + "/100");
+        System.out.printf("%-22s | %-24s | %-24s%n", "Stress Clues", round(a.stress) + "/100", round(b.stress) + "/100");
+        System.out.printf("%-22s | %-24s | %-24s%n", "Tone Style", a.toneStyle, b.toneStyle);
+        System.out.printf("%-22s | %-24s | %-24s%n", "CBT Distortions", a.cognitiveDistortions.size() + " detected", b.cognitiveDistortions.size() + " detected");
+        double diff = round(b.score - a.score);
+        System.out.println("-------------------------------------------------------------------------");
+        System.out.println("Net Sentiment Shift: " + (diff >= 0 ? "+" + diff : diff) + " points.");
+        System.out.println("=========================================================");
+    }
+
+    private static void trainWord() {
+        System.out.print("Enter a single word to train (English/Odia/Hinglish) > ");
+        String word = IN.nextLine().trim().toLowerCase(Locale.ROOT);
+        if (word.isEmpty() || word.contains(" ")) {
+            System.out.println("Please enter a single valid word without spaces.");
+            return;
+        }
+        System.out.print("Enter sentiment weight (-5.0 to +5.0, e.g., 3.0 or -3.0) > ");
+        double weight;
+        try {
+            weight = clamp(Double.parseDouble(IN.nextLine().trim()), -5.0, 5.0);
+        } catch (NumberFormatException e) {
+            System.out.println("Invalid number format.");
+            return;
+        }
+        System.out.println("Available Emotions: " + String.join(", ", EMOTIONS.keySet()));
+        System.out.print("Enter matching Emotion Category (or press Enter to skip) > ");
+        String emo = IN.nextLine().trim();
+
+        SENTIMENT.put(word, weight);
+        String matchedEmotion = "";
+        for (String k : EMOTIONS.keySet()) {
+            if (k.equalsIgnoreCase(emo)) {
+                EMOTIONS.get(k).add(word);
+                matchedEmotion = k;
+                break;
+            }
+        }
+        try {
+            String row = word + "," + weight + "," + matchedEmotion;
+            Files.write(CUSTOM_LEX, Collections.singleton(row), StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            System.out.println("Learned '" + word + "' (Weight: " + weight + ", Emotion: " + (matchedEmotion.isEmpty() ? "None" : matchedEmotion) + ") and saved to " + CUSTOM_LEX);
+        } catch (IOException e) {
+            System.out.println("Learned in memory, but failed to save to disk: " + e.getMessage());
+        }
+    }
+
+    private static void loadCustomLexicon() {
+        if (!Files.exists(CUSTOM_LEX)) return;
+        try {
+            List<String> lines = Files.readAllLines(CUSTOM_LEX, StandardCharsets.UTF_8);
+            int count = 0;
+            for (String line : lines) {
+                String[] parts = line.split(",");
+                if (parts.length >= 2) {
+                    String w = parts[0].trim().toLowerCase(Locale.ROOT);
+                    double weight = Double.parseDouble(parts[1].trim());
+                    SENTIMENT.put(w, weight);
+                    if (parts.length >= 3 && !parts[2].trim().isEmpty()) {
+                        String emo = parts[2].trim();
+                        if (EMOTIONS.containsKey(emo)) EMOTIONS.get(emo).add(w);
+                    }
+                    count++;
+                }
+            }
+            if (count > 0) System.out.println("Loaded " + count + " custom trained words from " + CUSTOM_LEX);
+        } catch (Exception ignored) {}
+    }
+
+    private static void batchAnalyze() {
+        System.out.print("Enter path to text file to analyze line-by-line > ");
+        String pathStr = IN.nextLine().trim();
+        if (pathStr.isEmpty()) return;
+        Path p = Paths.get(pathStr);
+        if (!Files.exists(p)) {
+            System.out.println("File not found: " + p.toAbsolutePath());
+            return;
+        }
+        try {
+            List<String> lines = Files.readAllLines(p, StandardCharsets.UTF_8);
+            int count = 0;
+            for (String line : lines) {
+                if (!line.trim().isEmpty()) {
+                    Result r = analyze(line.trim());
+                    append(r);
+                    sessionCount++;
+                    sessionTotal += r.score;
+                    count++;
+                    System.out.printf("[%d] %-10s (%5.1f) | %-15s | %s%n",
+                        count, r.sentiment, r.score, r.primary,
+                        line.length() > 45 ? line.substring(0, 45) + "..." : line);
+                }
+            }
+            System.out.println("Batch analysis complete! Processed and saved " + count + " lines.");
+        } catch (IOException e) {
+            System.out.println("Error reading batch file: " + e.getMessage());
+        }
+    }
+
+    private static void exportDashboard() {
+        List<String> rows = readRows();
+        if (rows.size() <= 1) {
+            System.out.println("No history available yet to generate a dashboard.");
+            return;
+        }
+        int pos = 0, neg = 0, neu = 0;
+        double sumScore = 0, sumStress = 0;
+        StringBuilder tableRows = new StringBuilder();
+
+        for (int i = rows.size() - 1; i >= 1; i--) {
+            String[] c = parseCsv(rows.get(i));
+            if (c.length < 12) continue;
+            try {
+                double sc = Double.parseDouble(c[2]);
+                double st = Double.parseDouble(c[7]);
+                sumScore += sc;
+                sumStress += st;
+                if (sc > 2) pos++; else if (sc < -2) neg++; else neu++;
+                String badgeColor = sc > 2 ? "#22c55e" : sc < -2 ? "#ef4444" : "#94a3b8";
+                tableRows.append("<tr>")
+                    .append("<td>").append(escapeHtml(c[0])).append("</td>")
+                    .append("<td><span style='color:").append(badgeColor).append(";font-weight:bold;'>")
+                    .append(escapeHtml(c[1])).append(" (").append(sc).append(")</span></td>")
+                    .append("<td>").append(escapeHtml(c[3])).append("</td>")
+                    .append("<td>").append(escapeHtml(c[4])).append("</td>")
+                    .append("<td>").append(escapeHtml(c[7])).append("/100</td>")
+                    .append("<td>").append(escapeHtml(c[11])).append("</td>")
+                    .append("</tr>\n");
+            } catch (Exception ignored) {}
+        }
+        int total = pos + neg + neu;
+        double avgScore = total > 0 ? round(sumScore / total) : 0;
+        double avgStress = total > 0 ? round(sumStress / total) : 0;
+
+        String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Emotion Insight Dashboard</title>"
+            + "<style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#f8fafc;margin:0;padding:24px;}"
+            + ".cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;}"
+            + ".card{background:#1e293b;padding:18px;border-radius:12px;border:1px solid #334155;}"
+            + ".card h3{margin:0 0 8px 0;font-size:14px;color:#94a3b8;}.card p{margin:0;font-size:26px;font-weight:700;}"
+            + "table{width:100%;border-collapse:collapse;background:#1e293b;border-radius:12px;overflow:hidden;}"
+            + "th,td{padding:12px 14px;text-align:left;border-bottom:1px solid #334155;font-size:14px;}"
+            + "th{background:#334155;color:#e2e8f0;}</style></head><body>"
+            + "<h1>Emotion Insight Engine PRO " + VERSION + " - Analytics Dashboard</h1>"
+            + "<div class='cards'>"
+            + "<div class='card'><h3>Total Entries</h3><p>" + total + "</p></div>"
+            + "<div class='card'><h3>Avg Sentiment</h3><p>" + avgScore + "</p></div>"
+            + "<div class='card'><h3>Avg Stress Index</h3><p>" + avgStress + "/100</p></div>"
+            + "<div class='card'><h3>Positive / Negative / Neutral</h3><p style='font-size:20px;'>"
+            + "<span style='color:#22c55e;'>+" + pos + "</span> / "
+            + "<span style='color:#ef4444;'>-" + neg + "</span> / "
+            + "<span style='color:#94a3b8;'>" + neu + "</span></p></div></div>"
+            + "<table><thead><tr><th>Timestamp</th><th>Sentiment</th><th>Primary Emotion</th><th>Mood</th><th>Stress</th><th>Text</th></tr></thead><tbody>"
+            + tabl
