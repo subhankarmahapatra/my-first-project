@@ -168,12 +168,12 @@ public class EmotionInsightEngine {
     private static void help() {
         System.out.println("\n--- HELP & COMMAND GUIDE ---");
         System.out.println("Type any sentence (English, Roman Odia, or Hinglish) to analyze it immediately.");
-        System.out.println("  compare   - Compare two sentences side-by-side (e.g., Draft 1 vs Draft 2)");
-        System.out.println("  train     - Teach the engine a new custom word with sentiment & emotion");
-        System.out.println("  dashboard - Generate an interactive HTML visual report (emotion_dashboard.html)");
-        System.out.println("  batch     - Analyze all lines inside a text file");
-        System.out.println("  breathe   - Start a guided 4-7-8 calming breathing exercise in the console");
-        System.out.println("  history   - View recent saved analyses");
+        System.out.println("  compare   -- Compare two sentences side-by-side (e.g., Draft 1 vs Draft 2)");
+        System.out.println("  train     -- Teach the engine a new custom word with sentiment & emotion");
+        System.out.println("  dashboard -- Generate an interactive HTML visual report (emotion_dashboard.html)");
+        System.out.println("  batch     -- Analyze all lines inside a text file");
+        System.out.println("  breathe   -- Start a guided 4-7-8 calming breathing exercise in the console");
+        System.out.println("  history   -- View recent saved analyses");
         System.out.println("  stats     - View overall statistics, averages, and emotion distribution");
         System.out.println("  trend     - View ASCII timeline trend of recent entries");
         System.out.println("  search    - Search saved history by keyword");
