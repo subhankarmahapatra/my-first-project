@@ -8,7 +8,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 /**
  * Emotion Insight Engine 8.0
@@ -36,7 +35,7 @@ public class EmotionInsightEngine {
             "not", "no", "never", "without", "isn't", "wasn't", "aren't",
             "didn't", "can't", "cannot", "couldn't", "won't", "wouldn't", "shouldn't",
             "isnt", "wasnt", "arent", "dont", "didnt", "cant", "couldnt", "wont",
-            "wouldnt", "shouldnt", "nahi", "nuhe", "nuhen", "na"));
+            "wouldnt", "shouldnt"));
     private static final Map<String, Double> BOOSTERS = new HashMap<>();
     private static final Map<String, Double> DAMPENERS = new HashMap<>();
     private static final Pattern TOKEN = Pattern.compile("[\\p{L}\\p{N}]+(?:['’][\\p{L}]+)?");
