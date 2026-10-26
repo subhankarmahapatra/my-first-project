@@ -33,7 +33,7 @@ public class EmotionInsightEngine {
     private static final Map<String, Double> SENTIMENT = new LinkedHashMap<>();
     private static final Map<String, String> EMOTION_BY_WORD = new HashMap<>();
     private static final Set<String> NEGATIONS = new HashSet<>(Arrays.asList(
-            "not", "no", "never", "without", "isn't", "wasn't", "aren't", "don't",
+            "not", "no", "never", "without", "isn't", "wasn't", "aren't",
             "didn't", "can't", "cannot", "couldn't", "won't", "wouldn't", "shouldn't",
             "isnt", "wasnt", "arent", "dont", "didnt", "cant", "couldnt", "wont",
             "wouldnt", "shouldnt", "nahi", "nuhe", "nuhen", "na"));
