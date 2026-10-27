@@ -8,6 +8,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Emotion Insight Engine 8.0
@@ -80,6 +81,7 @@ public class EmotionInsightEngine {
                     return;
                 case "help": printHelp(); break;
                 case "history": showHistory(); break;
+                case "today": showToday(); break;
                 case "stats": showStats(); break;
                 case "search": searchHistory(); break;
                 case "compare": compareTexts(); break;
@@ -139,6 +141,7 @@ public class EmotionInsightEngine {
     private static void printHelp() {
         System.out.println("\nCommands:");
         System.out.println("  history  - show recent saved analyses");
+        System.out.println("  today    - show analyses saved today");
         System.out.println("  stats    - show sentiment totals and average score");
         System.out.println("  search   - find saved entries by keyword");
         System.out.println("  compare  - compare two sentences");
@@ -307,6 +310,27 @@ public class EmotionInsightEngine {
             String[] r = rows.get(i);
             System.out.printf("%s | %-8s | %6s | %-14s | %s%n",
                     r[0], r[1], r[2], r[3], shorten(r[5], 60));
+        }
+    }
+
+    private static void showToday() {
+        String today = LocalDate.now().toString();
+        List<String[]> rows = readHistory();
+        int found = 0;
+
+        System.out.println("\\nAnalyses saved today (" + today + "):");
+        for (String[] row : rows) {
+            if (row.length >= 6 && row[0].startsWith(today)) {
+                System.out.printf("%s | %-8s | %6s | %-14s | %s%n",
+                        row[0], row[1], row[2], row[3], shorten(row[5], 60));
+                found++;
+            }
+        }
+
+        if (found == 0) {
+            System.out.println("No analyses saved today.");
+        } else {
+            System.out.println("Today's total: " + found);
         }
     }
 
