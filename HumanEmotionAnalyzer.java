@@ -46,8 +46,6 @@ public class EmotionInsightEngine {
         String text;
         String sentiment;
         String primaryEmotion;
-        double score;
-        int words;
         List<String> matchedWords = new ArrayList<>();
         Map<String, Double> emotions = new LinkedHashMap<>();
     }
