@@ -10,18 +10,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-/**
- * Emotion Insight Engine 8.0
- * Lightweight, rule-based text sentiment and emotion analyzer.
- *
- * Compile: javac EmotionInsightEngine.java
- * Run:     java EmotionInsightEngine
- *
- * Files created in the current folder:
- * emotion_log.csv, custom_lexicon.csv, emotion_dashboard.html
- *
- * Educational estimates only. This program is not a clinical or diagnostic tool.
- */
+
+
 public class EmotionInsightEngine {
     private static final Scanner IN = new Scanner(System.in);
     private static final Path LOG = Paths.get("emotion_log.csv");
