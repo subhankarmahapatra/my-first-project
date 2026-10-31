@@ -10,7 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 // human analyzer
-
+// human control 
 
 
 public class EmotionInsightEngine {
