@@ -9,27 +9,36 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-// human analyzer
-// human control 
+ 
 
-
+// Main class that manages text-based sentiment and emotion analysis.
 public class EmotionInsightEngine {
+    // Reads commands and text entered by the user.
     private static final Scanner IN = new Scanner(System.in);
+    // CSV file used to store analysis history.
     private static final Path LOG = Paths.get("emotion_log.csv");
+    // File used to save words added through the train command.
     private static final Path CUSTOM_LEXICON = Paths.get("custom_lexicon.csv");
+    // Output file for the HTML dashboard.
     private static final Path DASHBOARD = Paths.get("emotion_dashboard.html");
     private static final DateTimeFormatter TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    // Maps words to sentiment weights; positive and negative values represent polarity.
     private static final Map<String, Double> SENTIMENT = new LinkedHashMap<>();
+    // Maps emotion-related words to their emotion category.
     private static final Map<String, String> EMOTION_BY_WORD = new HashMap<>();
+    // Negation words can reverse the meaning of nearby sentiment words.
     private static final Set<String> NEGATIONS = new HashSet<>(Arrays.asList(
             "not", "no", "never", "without", "isn't", "wasn't", "aren't",
             "didn't", "can't", "cannot", "couldn't", "won't", "wouldn't", "shouldn't",
             "isnt", "wasnt", "arent", "dont", "didnt", "cant", "couldnt", "wont",
             "wouldnt", "shouldnt"));
+    // Intensifiers increase the influence of a sentiment word.
     private static final Map<String, Double> BOOSTERS = new HashMap<>();
+    // Dampeners reduce the influence of a sentiment word.
     private static final Map<String, Double> DAMPENERS = new HashMap<>();
+    // Pattern used to identify words and numbers in the input text.
     private static final Pattern TOKEN = Pattern.compile("[\\p{L}\\p{N}]+(?:['’][\\p{L}]+)?");
 
     private static class Result {
@@ -41,6 +50,7 @@ public class EmotionInsightEngine {
         Map<String, Double> emotions = new LinkedHashMap<>();
     }
 
+    // Program entry point: initialize data, display help, and process commands.
     public static void main(String[] args) {
         setupLexicon();
         loadCustomLexicon();
@@ -83,6 +93,7 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Load built-in sentiment words, emotion categories, and modifier words.
     private static void setupLexicon() {
         addWords(3, "happy joy joyful excited amazing grateful wonderful great good delighted cheerful hopeful enjoy awesome fantastic smile laugh fun positive glad pleased love lovely success successful win winner best brilliant perfect peaceful confident proud relaxed thankful optimistic calm safe relief relieved beautiful inspired motivated comfortable content satisfied excellent kind blessed capable helpful hope celebrate friendly appreciate thanks peace serene secure trust honest loyal brave strong determined thrilled khusi bhala bhal sundar mast badhiya shanti ananda dhanyabad");
         addWords(-3, "sad hurt pain angry lonely depressed bad terrible upset miserable stressed tired hopeless afraid worried anxious frustrated hate horrible awful failure fail failed problem cry crying broken disappointed exhausted nervous panic scared fear confused regret stress overwhelmed unhappy heartbroken helpless irritated furious annoyed guilty ashamed bored weak difficult worst pressure burnout overworked unfair dislike unsafe insecure grief sorrow worry rage terrified dukha kasta raga bhaya bekar kharap chinta dar tension");
@@ -119,14 +130,17 @@ public class EmotionInsightEngine {
         DAMPENERS.put("barely", 0.4);
     }
 
+    // Add each space-separated word to the sentiment dictionary.
     private static void addWords(double weight, String words) {
         for (String word : words.split("\\s+")) SENTIMENT.put(word, weight);
     }
 
+    // Associate each supplied word with an emotion category.
     private static void addEmotion(String emotion, String words) {
         for (String word : words.split("\\s+")) EMOTION_BY_WORD.put(word, emotion);
     }
 
+    // Display available commands and explain the limits of the analysis.
     private static void printHelp() {
         System.out.println("\nCommands:");
         System.out.println("  history  - show recent saved analyses");
@@ -143,28 +157,34 @@ public class EmotionInsightEngine {
         System.out.println("Note: results are heuristic estimates and can miss context, sarcasm, or mixed meanings.");
     }
 
+    // Analyze one text, calculate its sentiment score, and rank detected emotions.
     private static Result analyze(String text) {
         Result r = new Result();
         r.timestamp = LocalDateTime.now().format(TIME);
         r.text = text;
+        // Normalize the text and split it into tokens for dictionary matching.
         List<String> words = tokenize(text.toLowerCase(Locale.ROOT).replace('’', '\''));
         r.words = words.size();
         Map<String, Double> totals = new LinkedHashMap<>();
         for (String emotion : new LinkedHashSet<>(EMOTION_BY_WORD.values())) totals.put(emotion, 0.0);
 
+        // Track sentiment, nearby negation, and the current word modifier.
         double score = 0;
         int negationWindow = 0;
         double modifier = 1.0;
         for (String word : words) {
+            // Apply negation to the next few words in the sentence.
             if (NEGATIONS.contains(word) || word.endsWith("n't")) {
                 negationWindow = 3;
                 modifier = 1.0;
                 continue;
             }
+            // Intensifiers make the next matched word count more strongly.
             if (BOOSTERS.containsKey(word)) {
                 modifier = BOOSTERS.get(word);
                 continue;
             }
+            // Dampeners make the next matched word count less strongly.
             if (DAMPENERS.containsKey(word)) {
                 modifier = DAMPENERS.get(word);
                 continue;
@@ -185,11 +205,13 @@ public class EmotionInsightEngine {
             modifier = 1.0;
         }
 
+        // Handle a few common phrases that are not captured well by single-word matching.
         String normalized = text.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}' ]", " ").replaceAll("\\s+", " ").trim();
         if (normalized.contains("thank you")) { totals.merge("Gratitude", 2.0, Double::sum); score += 2.0; }
         if (normalized.contains("looking forward")) { totals.merge("Hope", 1.0, Double::sum); score += 1.0; }
         if (normalized.contains("on cloud nine")) { totals.merge("Happiness", 2.0, Double::sum); score += 3.0; }
 
+        // Scale the score and clamp it to the range -100 through +100.
         r.score = Math.max(-100, Math.min(100, score * 4.0));
         r.sentiment = r.score > 2 ? "Positive" : r.score < -2 ? "Negative" : "Neutral";
         r.emotions = totals.entrySet().stream()
@@ -202,6 +224,7 @@ public class EmotionInsightEngine {
         return r;
     }
 
+    // Extract word-like tokens using the TOKEN regular expression.
     private static List<String> tokenize(String text) {
         List<String> words = new ArrayList<>();
         Matcher m = TOKEN.matcher(text);
@@ -209,12 +232,14 @@ public class EmotionInsightEngine {
         return words;
     }
 
+    // Analyze the entered text, print the result, and save it to history.
     private static void analyzeAndSave(String text) {
         Result r = analyze(text);
         printResult(r);
         append(r);
     }
 
+    // Print the sentiment score, detected emotions, and a brief interpretation.
     private static void printResult(Result r) {
         System.out.println("\n--- Analysis ---");
         System.out.println("Time:            " + r.timestamp);
@@ -233,12 +258,14 @@ public class EmotionInsightEngine {
         System.out.println("Reminder: this is a text-based estimate, not a diagnosis.");
     }
 
+    // Convert the calculated sentiment label into a short explanatory message.
     private static String insight(Result r) {
         if (r.sentiment.equals("Positive")) return "Your text contains more positive than negative sentiment clues.";
         if (r.sentiment.equals("Negative")) return "Your text contains more negative than positive sentiment clues. Consider the context before drawing conclusions.";
         return "The text appears neutral or has too few clear sentiment clues for a strong result.";
     }
 
+    // Append one analysis result to the CSV history file.
     private static void append(Result r) {
         try {
             boolean newFile = !Files.exists(LOG) || Files.size(LOG) == 0;
@@ -253,10 +280,12 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Escape quotes and line breaks so text can be stored safely in a CSV field.
     private static String csv(String value) {
         return "\"" + value.replace("\"", "\"\"").replace("\r", " ").replace("\n", " ") + "\"";
     }
 
+    // Read saved CSV records and return each row as an array of fields.
     private static List<String[]> readHistory() {
         List<String[]> rows = new ArrayList<>();
         if (!Files.exists(LOG)) return rows;
@@ -272,6 +301,7 @@ public class EmotionInsightEngine {
         return rows;
     }
 
+    // Parse a CSV line while respecting commas inside quoted fields.
     private static List<String> parseCsvLine(String line) {
         List<String> fields = new ArrayList<>();
         StringBuilder field = new StringBuilder();
@@ -290,6 +320,7 @@ public class EmotionInsightEngine {
         return fields;
     }
 
+    // Display up to the ten most recent saved analyses.
     private static void showHistory() {
         List<String[]> rows = readHistory();
         if (rows.isEmpty()) { System.out.println("No saved analyses yet."); return; }
@@ -302,6 +333,7 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Display only the records whose timestamps match today's date.
     private static void showToday() {
         String today = LocalDate.now().toString();
         List<String[]> rows = readHistory();
@@ -323,6 +355,7 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Count positive, negative, and neutral records and calculate the average score.
     private static void showStats() {
         List<String[]> rows = readHistory();
         if (rows.isEmpty()) { System.out.println("No saved analyses yet."); return; }
@@ -342,6 +375,7 @@ public class EmotionInsightEngine {
         System.out.println("This summarizes text entries, not a person's mental-health status.");
     }
 
+    // Search saved text entries for a user-supplied keyword.
     private static void searchHistory() {
         System.out.print("Keyword to search > ");
         String term = IN.nextLine().trim().toLowerCase(Locale.ROOT);
@@ -356,6 +390,7 @@ public class EmotionInsightEngine {
         System.out.println("Matches: " + found);
     }
 
+    // Analyze two texts and compare their sentiment and emotion results.
     private static void compareTexts() {
         System.out.print("Text A > ");
         String aText = IN.nextLine().trim();
@@ -373,6 +408,7 @@ public class EmotionInsightEngine {
         System.out.printf("Score change (B - A): %.1f points%n", b.score - a.score);
     }
 
+    // Add a custom word, sentiment weight, and optional emotion category.
     private static void trainWord() {
         System.out.print("New single word (no spaces) > ");
         String word = IN.nextLine().trim().toLowerCase(Locale.ROOT);
@@ -405,6 +441,7 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Load custom words from disk when the program starts.
     private static void loadCustomLexicon() {
         if (!Files.exists(CUSTOM_LEXICON)) return;
         try {
@@ -424,6 +461,7 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Analyze each non-empty line in a user-selected UTF-8 text file.
     private static void batchAnalyze() {
         System.out.print("Path to UTF-8 text file > ");
         String path = IN.nextLine().trim();
@@ -445,6 +483,7 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Build an HTML dashboard summarizing the saved analysis history.
     private static void exportDashboard() {
         List<String[]> rows = readHistory();
         if (rows.isEmpty()) { System.out.println("No history to export."); return; }
@@ -480,10 +519,12 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Create one summary card for the HTML dashboard.
     private static String card(String title, Object value) {
         return "<div class='card'><div>" + html(title) + "</div><h2>" + html(String.valueOf(value)) + "</h2></div>";
     }
 
+    // Delete the saved history only after the user confirms the action.
     private static void clearHistory() {
         System.out.print("Delete all saved analysis history? Type YES to confirm > ");
         if (!IN.nextLine().trim().equals("YES")) { System.out.println("Cancelled."); return; }
@@ -495,19 +536,23 @@ public class EmotionInsightEngine {
         }
     }
 
+    // Escape HTML special characters to prevent text from breaking the page markup.
     private static String html(String s) {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 .replace("\"", "&quot;").replace("'", "&#39;");
     }
 
+    // Shorten long text so it fits neatly in history listings.
     private static String shorten(String s, int max) {
         return s.length() <= max ? s : s.substring(0, max - 3) + "...";
     }
 
+    // Round a numeric value to one decimal place.
     private static double round(double n) {
         return Math.round(n * 10.0) / 10.0;
     }
 
+    // Create the CSV history file with a header if it does not exist.
     private static void ensureLog() {
         if (Files.exists(LOG)) return;
         try {
