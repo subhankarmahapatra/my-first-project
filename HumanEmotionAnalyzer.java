@@ -11,7 +11,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
  
 
-// Main class that manages text-based sentiment and emotion analysis.
+
 public class EmotionInsightEngine {
     // Reads commands and text entered by the user.
     private static final Scanner IN = new Scanner(System.in);
