@@ -50,7 +50,7 @@ public class EmotionInsightEngine {
         Map<String, Double> emotions = new LinkedHashMap<>();
     }
 
-    // Program entry point: initialize data, display help, and process commands.
+ 
     public static void main(String[] args) {
         setupLexicon();
         loadCustomLexicon();
