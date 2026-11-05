@@ -34,7 +34,7 @@ public class EmotionInsightEngine {
             "didn't", "can't", "cannot", "couldn't", "won't", "wouldn't", "shouldn't",
             "isnt", "wasnt", "arent", "dont", "didnt", "cant", "couldnt", "wont",
             "wouldnt", "shouldnt"));
-    // Intensifiers increase the influence of a sentiment word.
+    
     private static final Map<String, Double> BOOSTERS = new HashMap<>();
     // Dampeners reduce the influence of a sentiment word.
     private static final Map<String, Double> DAMPENERS = new HashMap<>();
