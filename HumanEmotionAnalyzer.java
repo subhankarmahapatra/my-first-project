@@ -63,11 +63,7 @@ public class EmotionInsightEngine {
         while (true) {
             System.out.print("\n> ");
             String input;
-            try {
-                input = IN.nextLine().trim();
-            } catch (NoSuchElementException ex) {
-                break;
-            }
+         
             if (input.isEmpty()) continue;
 
             switch (input.toLowerCase(Locale.ROOT)) {
