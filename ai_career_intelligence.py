@@ -1,558 +1,2639 @@
-import java.io.BufferedWriter;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-
- 
-
-
-public class EmotionInsightEngine {
-    // Reads commands and text entered by the user.
-    private static final Scanner IN = new Scanner(System.in);
-    // CSV file used to store analysis history.
-    private static final Path LOG = Paths.get("emotion_log.csv");
-    // File used to save words added through the train command.
-    private static final Path CUSTOM_LEXICON = Paths.get("custom_lexicon.csv");
-    // Output file for the HTML dashboard.
-    private static final Path DASHBOARD = Paths.get("emotion_dashboard.html");
-    private static final DateTimeFormatter TIME =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-    // Maps words to sentiment weights; positive and negative values represent polarity.
-    private static final Map<String, Double> SENTIMENT = new LinkedHashMap<>();
-    // Maps emotion-related words to their emotion category.
-    private static final Map<String, String> EMOTION_BY_WORD = new HashMap<>();
-    // Negation words can reverse the meaning of nearby sentiment words.
-    private static final Set<String> NEGATIONS = new HashSet<>(Arrays.asList(
-            "not", "no", "never", "without", "isn't", "wasn't", "aren't",
-            "didn't", "can't", "cannot", "couldn't", "won't", "wouldn't", "shouldn't",
-            "isnt", "wasnt", "arent", "dont", "didnt", "cant", "couldnt", "wont",
-            "wouldnt", "shouldnt"));
-    
-    private static final Map<String, Double> BOOSTERS = new HashMap<>();
-    // Dampeners reduce the influence of a sentiment word.
-    private static final Map<String, Double> DAMPENERS = new HashMap<>();
-    // Pattern used to identify words and numbers in the input text.
-    private static final Pattern TOKEN = Pattern.compile("[\\p{L}\\p{N}]+(?:['’][\\p{L}]+)?");
-
-    private static class Result {
-        String timestamp;
-        String text;
-        String sentiment;
-        String primaryEmotion;
-        List<String> matchedWords = new ArrayList<>();
-        Map<String, Double> emotions = new LinkedHashMap<>();
-    }
-
- 
-    public static void main(String[] args) {
-        setupLexicon();
-        loadCustomLexicon();
-        ensureLog();
-
-        System.out.println("\n==============================================");
-        System.out.println("       EMOTION INSIGHT ENGINE 8.0");
-        System.out.println("==============================================");
-        System.out.println("Rule-based text analysis | English, Roman Odia and Hinglish");
-        System.out.println("Type a sentence to analyze it, or enter a command.");
-        printHelp();
-
-        while (true) {
-            System.out.print("\n> ");
-            String input;
-         
-            if (input.isEmpty()) continue;
-
-            switch (input.toLowerCase(Locale.ROOT)) {
-                case "exit":
-                case "quit":
-                    System.out.println("Goodbye!");
-                    return;
-                case "help": printHelp(); break;
-                case "history": showHistory(); break;
-                case "today": showToday(); break;
-                case "stats": showStats(); break;
-                case "search": searchHistory(); break;
-                case "compare": compareTexts(); break;
-                case "train": trainWord(); break;
-                case "batch": batchAnalyze(); break;
-                case "export": exportDashboard(); break;
-                case "clear": clearHistory(); break;
-                default: analyzeAndSave(input);
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/subhankarmahapatra/AI_Career_Intelligence_Job_Recommendation_System/blob/main/AI_Career_Intelligence_Job_Recommendation_System.ipynb\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "775f7ae4",
+      "metadata": {
+        "id": "775f7ae4"
+      },
+      "source": [
+        "# AI Career Intelligence & Job Recommendation System\n",
+        "### YBI Foundation — Advanced Internship Project\n",
+        "**Developed by:** Subhankar Mahapatra\n",
+        "\n",
+        "This notebook demonstrates a career decision-support prototype with career recommendations, resume keyword extraction, skill-gap analysis, job matching, salary regression, candidate clustering, visualizations and report exports.\n",
+        "\n",
+        "**Data integrity note:** Job vacancies and salary values are synthetic demonstration data, not real listings or verified market salary data. Recommendations are advisory, not hiring decisions or guarantees."
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "a4b2ee3c",
+      "metadata": {
+        "id": "a4b2ee3c"
+      },
+      "source": [
+        "## 1. Install and import libraries"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 1,
+      "id": "37df89c3",
+      "metadata": {
+        "id": "37df89c3"
+      },
+      "outputs": [],
+      "source": [
+        "%pip -q install pandas numpy scikit-learn matplotlib seaborn plotly joblib"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 2,
+      "id": "bd5d02e0",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "bd5d02e0",
+        "outputId": "960742fd-1468-458b-eeae-1684fdc16167"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Environment ready.\n"
+          ]
+        }
+      ],
+      "source": [
+        "import re, json, warnings, shutil\n",
+        "from pathlib import Path\n",
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "import matplotlib.pyplot as plt\n",
+        "import seaborn as sns\n",
+        "import plotly.express as px\n",
+        "\n",
+        "from sklearn.feature_extraction.text import TfidfVectorizer\n",
+        "from sklearn.metrics.pairwise import cosine_similarity\n",
+        "from sklearn.model_selection import train_test_split\n",
+        "from sklearn.compose import ColumnTransformer\n",
+        "from sklearn.preprocessing import OneHotEncoder, StandardScaler\n",
+        "from sklearn.pipeline import Pipeline\n",
+        "from sklearn.ensemble import RandomForestRegressor\n",
+        "from sklearn.cluster import KMeans\n",
+        "from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, silhouette_score\n",
+        "import joblib\n",
+        "\n",
+        "warnings.filterwarnings(\"ignore\")\n",
+        "np.random.seed(42)\n",
+        "sns.set_theme(style=\"whitegrid\")\n",
+        "pd.set_option(\"display.max_colwidth\", 120)\n",
+        "print(\"Environment ready.\")"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "a3ad905f",
+      "metadata": {
+        "id": "a3ad905f"
+      },
+      "source": [
+        "## 2. Skill normalization and career knowledge base"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 3,
+      "id": "4c8c6b57",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 613
+        },
+        "id": "4c8c6b57",
+        "outputId": "89dea244-65ef-4e54-96f6-5d69f68e2819"
+      },
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "                               role       category  salary_min_lpa  \\\n",
+              "0                      Data Analyst           Data             3.0   \n",
+              "1                    Data Scientist           Data             5.0   \n",
+              "2         Machine Learning Engineer             AI             5.0   \n",
+              "3          AI Application Developer             AI             3.5   \n",
+              "4                Frontend Developer       Software             2.8   \n",
+              "5                 Backend Developer       Software             3.0   \n",
+              "6              Full Stack Developer       Software             4.0   \n",
+              "7             Cybersecurity Analyst       Security             3.0   \n",
+              "8                    Cloud Engineer          Cloud             4.0   \n",
+              "9   Business Intelligence Developer           Data             3.0   \n",
+              "10                   UI/UX Designer         Design             2.5   \n",
+              "11           QA Automation Engineer       Software             3.0   \n",
+              "12                  DevOps Engineer          Cloud             4.5   \n",
+              "13                 Python Developer       Software             3.0   \n",
+              "14                     NLP Engineer             AI             6.0   \n",
+              "15       Technical Support Engineer  IT Operations             2.2   \n",
+              "16                  Product Analyst       Business             4.0   \n",
+              "17           IT Project Coordinator       Business             2.5   \n",
+              "\n",
+              "    salary_max_lpa  \n",
+              "0              7.0  \n",
+              "1             12.0  \n",
+              "2             14.0  \n",
+              "3              9.0  \n",
+              "4              7.0  \n",
+              "5              8.0  \n",
+              "6             10.0  \n",
+              "7              8.0  \n",
+              "8             11.0  \n",
+              "9              8.0  \n",
+              "10             7.0  \n",
+              "11             8.0  \n",
+              "12            12.0  \n",
+              "13             8.5  \n",
+              "14            16.0  \n",
+              "15             5.5  \n",
+              "16            10.0  \n",
+              "17             6.0  "
+            ],
+            "text/html": [
+              "\n",
+              "  <div id=\"df-c8283494-a61d-47ea-b062-a2b080eca412\" class=\"colab-df-container\">\n",
+              "    <div>\n",
+              "<style scoped>\n",
+              "    .dataframe tbody tr th:only-of-type {\n",
+              "        vertical-align: middle;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe tbody tr th {\n",
+              "        vertical-align: top;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe thead th {\n",
+              "        text-align: right;\n",
+              "    }\n",
+              "</style>\n",
+              "<table border=\"1\" class=\"dataframe\">\n",
+              "  <thead>\n",
+              "    <tr style=\"text-align: right;\">\n",
+              "      <th></th>\n",
+              "      <th>role</th>\n",
+              "      <th>category</th>\n",
+              "      <th>salary_min_lpa</th>\n",
+              "      <th>salary_max_lpa</th>\n",
+              "    </tr>\n",
+              "  </thead>\n",
+              "  <tbody>\n",
+              "    <tr>\n",
+              "      <th>0</th>\n",
+              "      <td>Data Analyst</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>3.0</td>\n",
+              "      <td>7.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>1</th>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>5.0</td>\n",
+              "      <td>12.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>2</th>\n",
+              "      <td>Machine Learning Engineer</td>\n",
+              "      <td>AI</td>\n",
+              "      <td>5.0</td>\n",
+              "      <td>14.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>3</th>\n",
+              "      <td>AI Application Developer</td>\n",
+              "      <td>AI</td>\n",
+              "      <td>3.5</td>\n",
+              "      <td>9.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>4</th>\n",
+              "      <td>Frontend Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>2.8</td>\n",
+              "      <td>7.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>5</th>\n",
+              "      <td>Backend Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>3.0</td>\n",
+              "      <td>8.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>6</th>\n",
+              "      <td>Full Stack Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>4.0</td>\n",
+              "      <td>10.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>7</th>\n",
+              "      <td>Cybersecurity Analyst</td>\n",
+              "      <td>Security</td>\n",
+              "      <td>3.0</td>\n",
+              "      <td>8.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>8</th>\n",
+              "      <td>Cloud Engineer</td>\n",
+              "      <td>Cloud</td>\n",
+              "      <td>4.0</td>\n",
+              "      <td>11.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>9</th>\n",
+              "      <td>Business Intelligence Developer</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>3.0</td>\n",
+              "      <td>8.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>10</th>\n",
+              "      <td>UI/UX Designer</td>\n",
+              "      <td>Design</td>\n",
+              "      <td>2.5</td>\n",
+              "      <td>7.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>11</th>\n",
+              "      <td>QA Automation Engineer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>3.0</td>\n",
+              "      <td>8.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>12</th>\n",
+              "      <td>DevOps Engineer</td>\n",
+              "      <td>Cloud</td>\n",
+              "      <td>4.5</td>\n",
+              "      <td>12.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>13</th>\n",
+              "      <td>Python Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>3.0</td>\n",
+              "      <td>8.5</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>14</th>\n",
+              "      <td>NLP Engineer</td>\n",
+              "      <td>AI</td>\n",
+              "      <td>6.0</td>\n",
+              "      <td>16.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>15</th>\n",
+              "      <td>Technical Support Engineer</td>\n",
+              "      <td>IT Operations</td>\n",
+              "      <td>2.2</td>\n",
+              "      <td>5.5</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>16</th>\n",
+              "      <td>Product Analyst</td>\n",
+              "      <td>Business</td>\n",
+              "      <td>4.0</td>\n",
+              "      <td>10.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>17</th>\n",
+              "      <td>IT Project Coordinator</td>\n",
+              "      <td>Business</td>\n",
+              "      <td>2.5</td>\n",
+              "      <td>6.0</td>\n",
+              "    </tr>\n",
+              "  </tbody>\n",
+              "</table>\n",
+              "</div>\n",
+              "    <div class=\"colab-df-buttons\">\n",
+              "\n",
+              "  <div class=\"colab-df-container\">\n",
+              "    <button class=\"colab-df-convert\" onclick=\"convertToInteractive('df-c8283494-a61d-47ea-b062-a2b080eca412')\"\n",
+              "            title=\"Convert this dataframe to an interactive table.\"\n",
+              "            style=\"display:none;\">\n",
+              "\n",
+              "  <svg xmlns=\"http://www.w3.org/2000/svg\" height=\"24px\" viewBox=\"0 -960 960 960\">\n",
+              "    <path d=\"M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z\"/>\n",
+              "  </svg>\n",
+              "    </button>\n",
+              "\n",
+              "  <style>\n",
+              "    .colab-df-container {\n",
+              "      display:flex;\n",
+              "      gap: 12px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert {\n",
+              "      background-color: #E8F0FE;\n",
+              "      border: none;\n",
+              "      border-radius: 50%;\n",
+              "      cursor: pointer;\n",
+              "      display: none;\n",
+              "      fill: #1967D2;\n",
+              "      height: 32px;\n",
+              "      padding: 0 0 0 0;\n",
+              "      width: 32px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert:hover {\n",
+              "      background-color: #E2EBFA;\n",
+              "      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);\n",
+              "      fill: #174EA6;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-buttons div {\n",
+              "      margin-bottom: 4px;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert {\n",
+              "      background-color: #3B4455;\n",
+              "      fill: #D2E3FC;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert:hover {\n",
+              "      background-color: #434B5C;\n",
+              "      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);\n",
+              "      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));\n",
+              "      fill: #FFFFFF;\n",
+              "    }\n",
+              "  </style>\n",
+              "\n",
+              "    <script>\n",
+              "      const buttonEl =\n",
+              "        document.querySelector('#df-c8283494-a61d-47ea-b062-a2b080eca412 button.colab-df-convert');\n",
+              "      buttonEl.style.display =\n",
+              "        google.colab.kernel.accessAllowed ? 'block' : 'none';\n",
+              "\n",
+              "      async function convertToInteractive(key) {\n",
+              "        const element = document.querySelector('#df-c8283494-a61d-47ea-b062-a2b080eca412');\n",
+              "        const dataTable =\n",
+              "          await google.colab.kernel.invokeFunction('convertToInteractive',\n",
+              "                                                    [key], {});\n",
+              "        if (!dataTable) return;\n",
+              "\n",
+              "        const docLinkHtml = 'Like what you see? Visit the ' +\n",
+              "          '<a target=\"_blank\" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'\n",
+              "          + ' to learn more about interactive tables.';\n",
+              "        element.innerHTML = '';\n",
+              "        dataTable['output_type'] = 'display_data';\n",
+              "        await google.colab.output.renderOutput(dataTable, element);\n",
+              "        const docLink = document.createElement('div');\n",
+              "        docLink.innerHTML = docLinkHtml;\n",
+              "        element.appendChild(docLink);\n",
+              "      }\n",
+              "    </script>\n",
+              "  </div>\n",
+              "\n",
+              "\n",
+              "    </div>\n",
+              "  </div>\n"
+            ],
+            "application/vnd.google.colaboratory.intrinsic+json": {
+              "type": "dataframe",
+              "summary": "{\n  \"name\": \"display(career_df[[\\\"role\\\",\\\"category\\\",\\\"salary_min_lpa\\\",\\\"salary_max_lpa\\\"]])\",\n  \"rows\": 18,\n  \"fields\": [\n    {\n      \"column\": \"role\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 18,\n        \"samples\": [\n          \"Data Analyst\",\n          \"Data Scientist\",\n          \"Cloud Engineer\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"category\",\n      \"properties\": {\n        \"dtype\": \"category\",\n        \"num_unique_values\": 8,\n        \"samples\": [\n          \"AI\",\n          \"Design\",\n          \"Data\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"salary_min_lpa\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 1.032542391793031,\n        \"min\": 2.2,\n        \"max\": 6.0,\n        \"num_unique_values\": 9,\n        \"samples\": [\n          6.0,\n          5.0,\n          2.5\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"salary_max_lpa\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 2.8087165910587855,\n        \"min\": 5.5,\n        \"max\": 16.0,\n        \"num_unique_values\": 11,\n        \"samples\": [\n          10.0,\n          7.0,\n          5.5\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
             }
+          },
+          "metadata": {}
         }
-    }
-
-    // Load built-in sentiment words, emotion categories, and modifier words.
-    private static void setupLexicon() {
-        addWords(3, "happy joy joyful excited amazing grateful wonderful great good delighted cheerful hopeful enjoy awesome fantastic smile laugh fun positive glad pleased love lovely success successful win winner best brilliant perfect peaceful confident proud relaxed thankful optimistic calm safe relief relieved beautiful inspired motivated comfortable content satisfied excellent kind blessed capable helpful hope celebrate friendly appreciate thanks peace serene secure trust honest loyal brave strong determined thrilled khusi bhala bhal sundar mast badhiya shanti ananda dhanyabad");
-        addWords(-3, "sad hurt pain angry lonely depressed bad terrible upset miserable stressed tired hopeless afraid worried anxious frustrated hate horrible awful failure fail failed problem cry crying broken disappointed exhausted nervous panic scared fear confused regret stress overwhelmed unhappy heartbroken helpless irritated furious annoyed guilty ashamed bored weak difficult worst pressure burnout overworked unfair dislike unsafe insecure grief sorrow worry rage terrified dukha kasta raga bhaya bekar kharap chinta dar tension");
-        addEmotion("Happiness", "happy joy joyful excited amazing wonderful delighted cheerful glad pleased awesome fantastic smile laugh fun positive celebrate thrilled khusi ananda mast");
-        addEmotion("Sadness", "sad cry crying lonely depressed hurt pain upset miserable hopeless heartbroken grief broken disappointed sorrow unhappy helpless dukha kasta");
-        addEmotion("Anger", "angry hate frustrated furious annoyed rage irritated raga");
-        addEmotion("Fear", "scared fear worried anxious nervous terrified afraid panic bhaya dar chinta");
-        addEmotion("Love", "love lovely caring special affection adore romantic cherish beloved relationship care prema");
-        addEmotion("Trust", "trust trusted reliable honest loyal faithful dependable believe respect biswasa");
-        addEmotion("Stress", "stress stressed pressure overwhelmed busy exhausted deadline tension burnout workload");
-        addEmotion("Gratitude", "grateful thankful thanks appreciate gratitude dhanyabad");
-        addEmotion("Confidence", "confident capable brave courage determined strong prepared sahasa");
-        addEmotion("Hope", "hope hopeful optimistic future possible possibility aasha");
-        addEmotion("Confusion", "confused confusing uncertain unsure doubt doubtful lost unclear puzzled");
-        addEmotion("Curiosity", "curious question wonder explore learn discover interesting why how jigyasa");
-        addEmotion("Disappointment", "disappointed failure regret letdown unfulfilled nirasha");
-        addEmotion("Calmness", "calm peaceful relaxed quiet comfortable safe serene peace relief shanti");
-        addEmotion("Surprise", "surprised shocked unexpected astonished wow unbelievable surprise");
-        addEmotion("Boredom", "bored boring dull uninterested tedious birakta");
-        addEmotion("Pride", "proud achievement achieved winner winning accomplished progress garba");
-        addEmotion("Jealousy", "jealous envy envious irsha");
-        addEmotion("Loneliness", "lonely alone isolated abandoned disconnected ekaki");
-        addEmotion("Disgust", "disgusted gross revolting nasty repulsive disgusting dirty dislike ghrina");
-
-        for (String w : Arrays.asList("very", "really", "extremely", "incredibly", "absolutely", "deeply", "so", "too", "bahut")) {
-            BOOSTERS.put(w, 1.5);
-        }
-        BOOSTERS.put("extremely", 2.0);
-        BOOSTERS.put("incredibly", 1.8);
-        BOOSTERS.put("bahut", 1.7);
-        for (String w : Arrays.asList("slightly", "somewhat", "little", "mildly", "barely", "bit", "tike", "alpa")) {
-            DAMPENERS.put(w, 0.6);
-        }
-        DAMPENERS.put("barely", 0.4);
-    }
-
-    // Add each space-separated word to the sentiment dictionary.
-    private static void addWords(double weight, String words) {
-        for (String word : words.split("\\s+")) SENTIMENT.put(word, weight);
-    }
-
-    // Associate each supplied word with an emotion category.
-    private static void addEmotion(String emotion, String words) {
-        for (String word : words.split("\\s+")) EMOTION_BY_WORD.put(word, emotion);
-    }
-
-    // Display available commands and explain the limits of the analysis.
-    private static void printHelp() {
-        System.out.println("\nCommands:");
-        System.out.println("  history  - show recent saved analyses");
-        System.out.println("  today    - show analyses saved today");
-        System.out.println("  stats    - show sentiment totals and average score");
-        System.out.println("  search   - find saved entries by keyword");
-        System.out.println("  compare  - compare two sentences");
-        System.out.println("  train    - add a custom word to the lexicon");
-        System.out.println("  batch    - analyze each non-empty line in a text file");
-        System.out.println("  export   - create a simple HTML dashboard");
-        System.out.println("  clear    - clear saved history after confirmation");
-        System.out.println("  help     - show this guide");
-        System.out.println("  exit     - quit");
-        System.out.println("Note: results are heuristic estimates and can miss context, sarcasm, or mixed meanings.");
-    }
-
-    // Analyze one text, calculate its sentiment score, and rank detected emotions.
-    private static Result analyze(String text) {
-        Result r = new Result();
-        r.timestamp = LocalDateTime.now().format(TIME);
-        r.text = text;
-        // Normalize the text and split it into tokens for dictionary matching.
-        List<String> words = tokenize(text.toLowerCase(Locale.ROOT).replace('’', '\''));
-        r.words = words.size();
-        Map<String, Double> totals = new LinkedHashMap<>();
-        for (String emotion : new LinkedHashSet<>(EMOTION_BY_WORD.values())) totals.put(emotion, 0.0);
-
-        // Track sentiment, nearby negation, and the current word modifier.
-        double score = 0;
-        int negationWindow = 0;
-        double modifier = 1.0;
-        for (String word : words) {
-            // Apply negation to the next few words in the sentence.
-            if (NEGATIONS.contains(word) || word.endsWith("n't")) {
-                negationWindow = 3;
-                modifier = 1.0;
-                continue;
+      ],
+      "source": [
+        "SKILL_ALIASES = {\n",
+        "    \"py\": \"python\", \"python3\": \"python\", \"js\": \"javascript\",\n",
+        "    \"ml\": \"machine learning\", \"ai\": \"artificial intelligence\",\n",
+        "    \"dl\": \"deep learning\", \"nlp\": \"natural language processing\",\n",
+        "    \"powerbi\": \"power bi\", \"ms excel\": \"excel\", \"cpp\": \"c++\",\n",
+        "    \"sklearn\": \"scikit-learn\", \"reactjs\": \"react\", \"node\": \"node.js\"\n",
+        "}\n",
+        "\n",
+        "SKILL_CATALOG = [\n",
+        "    \"python\",\"java\",\"c\",\"c++\",\"javascript\",\"typescript\",\"html\",\"css\",\"react\",\n",
+        "    \"node.js\",\"sql\",\"mysql\",\"postgresql\",\"mongodb\",\"excel\",\"power bi\",\"tableau\",\n",
+        "    \"statistics\",\"data analysis\",\"data cleaning\",\"pandas\",\"numpy\",\"matplotlib\",\n",
+        "    \"seaborn\",\"plotly\",\"machine learning\",\"deep learning\",\"artificial intelligence\",\n",
+        "    \"natural language processing\",\"computer vision\",\"scikit-learn\",\"tensorflow\",\n",
+        "    \"pytorch\",\"generative ai\",\"prompt engineering\",\"cloud computing\",\"aws\",\"azure\",\n",
+        "    \"google cloud\",\"linux\",\"networking\",\"cybersecurity\",\"ethical hacking\",\"docker\",\n",
+        "    \"kubernetes\",\"git\",\"github\",\"rest api\",\"fastapi\",\"flask\",\"django\",\"streamlit\",\n",
+        "    \"problem solving\",\"communication\",\"teamwork\",\"leadership\",\"project management\",\n",
+        "    \"critical thinking\",\"figma\",\"ui design\"\n",
+        "]\n",
+        "\n",
+        "def normalize_skill(value):\n",
+        "    value = re.sub(r\"\\\\s+\", \" \", str(value).strip().lower())\n",
+        "    value = value.replace(\"_\", \" \").replace(\"-\", \" \")\n",
+        "    return SKILL_ALIASES.get(value, value)\n",
+        "\n",
+        "def normalize_skill_list(values):\n",
+        "    if isinstance(values, str):\n",
+        "        values = re.split(r\"[,;|\\\\n]\", values)\n",
+        "    return sorted({normalize_skill(v) for v in values if str(v).strip()})\n",
+        "\n",
+        "CAREER_ROLES = [\n",
+        "    {\"role\":\"Data Analyst\",\"category\":\"Data\",\"skills\":[\"sql\",\"excel\",\"python\",\"pandas\",\"statistics\",\"power bi\",\"data visualization\"],\"interests\":[\"data\",\"business\",\"research\"],\"description\":\"Turns raw data into reports and business insights.\",\"salary_min_lpa\":3.0,\"salary_max_lpa\":7.0,\"learning\":[\"Excel and SQL fundamentals\",\"Python with Pandas\",\"Statistics and visualization\",\"Build a dashboard portfolio\"]},\n",
+        "    {\"role\":\"Data Scientist\",\"category\":\"Data\",\"skills\":[\"python\",\"sql\",\"statistics\",\"machine learning\",\"pandas\",\"numpy\",\"scikit-learn\"],\"interests\":[\"data\",\"research\",\"mathematics\"],\"description\":\"Uses statistics and machine learning to solve data problems.\",\"salary_min_lpa\":5.0,\"salary_max_lpa\":12.0,\"learning\":[\"Python, SQL and statistics\",\"Exploratory data analysis\",\"Supervised machine learning\",\"Model deployment\"]},\n",
+        "    {\"role\":\"Machine Learning Engineer\",\"category\":\"AI\",\"skills\":[\"python\",\"machine learning\",\"scikit-learn\",\"tensorflow\",\"pytorch\",\"rest api\",\"docker\",\"git\"],\"interests\":[\"ai\",\"engineering\",\"research\"],\"description\":\"Builds, evaluates and deploys machine-learning systems.\",\"salary_min_lpa\":5.0,\"salary_max_lpa\":14.0,\"learning\":[\"Python and software engineering\",\"ML algorithms and evaluation\",\"Deep learning framework\",\"APIs and deployment\"]},\n",
+        "    {\"role\":\"AI Application Developer\",\"category\":\"AI\",\"skills\":[\"python\",\"artificial intelligence\",\"generative ai\",\"prompt engineering\",\"rest api\",\"streamlit\",\"git\"],\"interests\":[\"ai\",\"building\",\"creativity\"],\"description\":\"Creates practical applications using AI models and APIs.\",\"salary_min_lpa\":3.5,\"salary_max_lpa\":9.0,\"learning\":[\"Python and API basics\",\"Prompt design and evaluation\",\"Build an AI assistant\",\"Deploy and document an application\"]},\n",
+        "    {\"role\":\"Frontend Developer\",\"category\":\"Software\",\"skills\":[\"html\",\"css\",\"javascript\",\"react\",\"typescript\",\"git\",\"figma\"],\"interests\":[\"design\",\"building\",\"web\"],\"description\":\"Builds responsive and accessible user interfaces.\",\"salary_min_lpa\":2.8,\"salary_max_lpa\":7.0,\"learning\":[\"HTML and semantic structure\",\"CSS and responsive design\",\"JavaScript fundamentals\",\"React portfolio projects\"]},\n",
+        "    {\"role\":\"Backend Developer\",\"category\":\"Software\",\"skills\":[\"python\",\"java\",\"sql\",\"rest api\",\"fastapi\",\"django\",\"git\",\"docker\"],\"interests\":[\"engineering\",\"building\",\"systems\"],\"description\":\"Builds server-side logic, APIs and data services.\",\"salary_min_lpa\":3.0,\"salary_max_lpa\":8.0,\"learning\":[\"One backend language\",\"Databases and SQL\",\"REST API development\",\"Testing and deployment\"]},\n",
+        "    {\"role\":\"Full Stack Developer\",\"category\":\"Software\",\"skills\":[\"html\",\"css\",\"javascript\",\"react\",\"node.js\",\"sql\",\"mongodb\",\"rest api\",\"git\"],\"interests\":[\"web\",\"building\",\"engineering\"],\"description\":\"Develops both frontend and backend components.\",\"salary_min_lpa\":4.0,\"salary_max_lpa\":10.0,\"learning\":[\"Frontend fundamentals\",\"Backend and API development\",\"Database design\",\"Deploy a complete application\"]},\n",
+        "    {\"role\":\"Cybersecurity Analyst\",\"category\":\"Security\",\"skills\":[\"linux\",\"networking\",\"cybersecurity\",\"ethical hacking\",\"python\",\"problem solving\"],\"interests\":[\"security\",\"investigation\",\"systems\"],\"description\":\"Monitors systems, investigates threats and improves security.\",\"salary_min_lpa\":3.0,\"salary_max_lpa\":8.0,\"learning\":[\"Networking and Linux\",\"Security fundamentals\",\"Log analysis and tools\",\"Labs and reports\"]},\n",
+        "    {\"role\":\"Cloud Engineer\",\"category\":\"Cloud\",\"skills\":[\"cloud computing\",\"aws\",\"azure\",\"linux\",\"networking\",\"docker\",\"kubernetes\",\"git\"],\"interests\":[\"cloud\",\"systems\",\"engineering\"],\"description\":\"Builds and maintains cloud infrastructure and services.\",\"salary_min_lpa\":4.0,\"salary_max_lpa\":11.0,\"learning\":[\"Linux and networking\",\"Choose one cloud platform\",\"Containers and infrastructure\",\"Deploy and monitor a cloud project\"]},\n",
+        "    {\"role\":\"Business Intelligence Developer\",\"category\":\"Data\",\"skills\":[\"sql\",\"power bi\",\"excel\",\"data analysis\",\"data cleaning\",\"statistics\"],\"interests\":[\"business\",\"data\",\"communication\"],\"description\":\"Designs dashboards and data models for business decisions.\",\"salary_min_lpa\":3.0,\"salary_max_lpa\":8.0,\"learning\":[\"Excel and SQL\",\"Data modeling\",\"Power BI dashboards\",\"Business case-study portfolio\"]},\n",
+        "    {\"role\":\"UI/UX Designer\",\"category\":\"Design\",\"skills\":[\"figma\",\"ui design\",\"communication\",\"critical thinking\",\"html\",\"css\"],\"interests\":[\"design\",\"creativity\",\"people\"],\"description\":\"Researches user needs and designs usable digital experiences.\",\"salary_min_lpa\":2.5,\"salary_max_lpa\":7.0,\"learning\":[\"Design principles and Figma\",\"User research\",\"Wireframes and prototypes\",\"Usability testing\"]},\n",
+        "    {\"role\":\"QA Automation Engineer\",\"category\":\"Software\",\"skills\":[\"python\",\"javascript\",\"problem solving\",\"git\",\"rest api\",\"sql\"],\"interests\":[\"quality\",\"engineering\",\"testing\"],\"description\":\"Automates software tests and improves product quality.\",\"salary_min_lpa\":3.0,\"salary_max_lpa\":8.0,\"learning\":[\"Testing fundamentals\",\"Python or JavaScript\",\"Automation framework\",\"CI workflow\"]},\n",
+        "    {\"role\":\"DevOps Engineer\",\"category\":\"Cloud\",\"skills\":[\"linux\",\"git\",\"docker\",\"kubernetes\",\"cloud computing\",\"aws\",\"python\",\"networking\"],\"interests\":[\"automation\",\"systems\",\"engineering\"],\"description\":\"Automates software delivery and infrastructure operations.\",\"salary_min_lpa\":4.5,\"salary_max_lpa\":12.0,\"learning\":[\"Linux, Git and scripting\",\"CI/CD pipelines\",\"Docker and Kubernetes\",\"Cloud deployment\"]},\n",
+        "    {\"role\":\"Python Developer\",\"category\":\"Software\",\"skills\":[\"python\",\"git\",\"sql\",\"rest api\",\"fastapi\",\"django\",\"problem solving\"],\"interests\":[\"programming\",\"automation\",\"building\"],\"description\":\"Builds software, automation scripts and backend services with Python.\",\"salary_min_lpa\":3.0,\"salary_max_lpa\":8.5,\"learning\":[\"Python fundamentals and OOP\",\"Data structures and testing\",\"Build APIs or automation tools\",\"Deploy and document projects\"]},\n",
+        "    {\"role\":\"NLP Engineer\",\"category\":\"AI\",\"skills\":[\"python\",\"natural language processing\",\"machine learning\",\"deep learning\",\"pytorch\",\"generative ai\"],\"interests\":[\"language\",\"ai\",\"research\"],\"description\":\"Builds systems that process and understand human language.\",\"salary_min_lpa\":6.0,\"salary_max_lpa\":16.0,\"learning\":[\"Python and ML foundations\",\"Text processing and embeddings\",\"Transformers and evaluation\",\"Build an NLP application\"]},\n",
+        "    {\"role\":\"Technical Support Engineer\",\"category\":\"IT Operations\",\"skills\":[\"networking\",\"linux\",\"problem solving\",\"communication\",\"sql\"],\"interests\":[\"troubleshooting\",\"people\",\"systems\"],\"description\":\"Diagnoses technical issues and supports users and systems.\",\"salary_min_lpa\":2.2,\"salary_max_lpa\":5.5,\"learning\":[\"Computer and network fundamentals\",\"Operating systems\",\"Troubleshooting methods\",\"Communication practice\"]},\n",
+        "    {\"role\":\"Product Analyst\",\"category\":\"Business\",\"skills\":[\"sql\",\"excel\",\"statistics\",\"data analysis\",\"communication\",\"power bi\"],\"interests\":[\"business\",\"data\",\"product\"],\"description\":\"Analyzes product usage and recommends improvements.\",\"salary_min_lpa\":4.0,\"salary_max_lpa\":10.0,\"learning\":[\"SQL and analytics\",\"Product metrics\",\"Experiment analysis\",\"Communicate insights\"]},\n",
+        "    {\"role\":\"IT Project Coordinator\",\"category\":\"Business\",\"skills\":[\"project management\",\"communication\",\"excel\",\"teamwork\",\"problem solving\"],\"interests\":[\"planning\",\"people\",\"business\"],\"description\":\"Coordinates schedules, tasks, communication and project delivery.\",\"salary_min_lpa\":2.5,\"salary_max_lpa\":6.0,\"learning\":[\"Project lifecycle fundamentals\",\"Agile and Scrum basics\",\"Planning and reporting tools\",\"Coordinate a portfolio project\"]}\n",
+        "]\n",
+        "\n",
+        "career_df = pd.DataFrame(CAREER_ROLES)\n",
+        "career_df[\"profile_text\"] = career_df.apply(\n",
+        "    lambda r: \" \".join([r[\"role\"],r[\"category\"],r[\"description\"],\" \".join(r[\"skills\"]),\" \".join(r[\"interests\"])]), axis=1\n",
+        ")\n",
+        "display(career_df[[\"role\",\"category\",\"salary_min_lpa\",\"salary_max_lpa\"]])"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "6670215d",
+      "metadata": {
+        "id": "6670215d"
+      },
+      "source": [
+        "## 3. Generate a synthetic job-vacancy dataset"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 4,
+      "id": "6d3c4945",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 501
+        },
+        "id": "6d3c4945",
+        "outputId": "7abb0cea-ecf0-4278-b5f9-edda2e219955"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Synthetic vacancies: 500\n"
+          ]
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "    job_id                            title            company category  \\\n",
+              "0  JOB0001                   Data Scientist  Northstar Digital     Data   \n",
+              "1  JOB0002         AI Application Developer          NovaWorks       AI   \n",
+              "2  JOB0003  Business Intelligence Developer   BluePeak Systems     Data   \n",
+              "3  JOB0004                     NLP Engineer         Cedar Labs       AI   \n",
+              "4  JOB0005                   Data Scientist       Vertex Cloud     Data   \n",
+              "\n",
+              "      location  experience_years  \\\n",
+              "0    Delhi NCR                 4   \n",
+              "1    Delhi NCR                 0   \n",
+              "2  Bhubaneswar                 0   \n",
+              "3    Bengaluru                 3   \n",
+              "4       Remote                 5   \n",
+              "\n",
+              "                                                                                  required_skills  \\\n",
+              "0                        [python, sql, statistics, machine learning, pandas, numpy, scikit-learn]   \n",
+              "1  [python, artificial intelligence, generative ai, prompt engineering, rest api, streamlit, git]   \n",
+              "2                                [sql, power bi, excel, data analysis, data cleaning, statistics]   \n",
+              "3  [python, natural language processing, machine learning, deep learning, pytorch, generative ai]   \n",
+              "4         [python, sql, statistics, machine learning, pandas, numpy, scikit-learn, generative ai]   \n",
+              "\n",
+              "                                                    description  salary_lpa  \n",
+              "0  Uses statistics and machine learning to solve data problems.       10.98  \n",
+              "1      Creates practical applications using AI models and APIs.        6.37  \n",
+              "2    Designs dashboards and data models for business decisions.        6.29  \n",
+              "3    Builds systems that process and understand human language.       12.77  \n",
+              "4  Uses statistics and machine learning to solve data problems.       10.71  "
+            ],
+            "text/html": [
+              "\n",
+              "  <div id=\"df-3e08cc51-242d-43ed-a63e-d45ab4a64310\" class=\"colab-df-container\">\n",
+              "    <div>\n",
+              "<style scoped>\n",
+              "    .dataframe tbody tr th:only-of-type {\n",
+              "        vertical-align: middle;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe tbody tr th {\n",
+              "        vertical-align: top;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe thead th {\n",
+              "        text-align: right;\n",
+              "    }\n",
+              "</style>\n",
+              "<table border=\"1\" class=\"dataframe\">\n",
+              "  <thead>\n",
+              "    <tr style=\"text-align: right;\">\n",
+              "      <th></th>\n",
+              "      <th>job_id</th>\n",
+              "      <th>title</th>\n",
+              "      <th>company</th>\n",
+              "      <th>category</th>\n",
+              "      <th>location</th>\n",
+              "      <th>experience_years</th>\n",
+              "      <th>required_skills</th>\n",
+              "      <th>description</th>\n",
+              "      <th>salary_lpa</th>\n",
+              "    </tr>\n",
+              "  </thead>\n",
+              "  <tbody>\n",
+              "    <tr>\n",
+              "      <th>0</th>\n",
+              "      <td>JOB0001</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>Northstar Digital</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>Delhi NCR</td>\n",
+              "      <td>4</td>\n",
+              "      <td>[python, sql, statistics, machine learning, pandas, numpy, scikit-learn]</td>\n",
+              "      <td>Uses statistics and machine learning to solve data problems.</td>\n",
+              "      <td>10.98</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>1</th>\n",
+              "      <td>JOB0002</td>\n",
+              "      <td>AI Application Developer</td>\n",
+              "      <td>NovaWorks</td>\n",
+              "      <td>AI</td>\n",
+              "      <td>Delhi NCR</td>\n",
+              "      <td>0</td>\n",
+              "      <td>[python, artificial intelligence, generative ai, prompt engineering, rest api, streamlit, git]</td>\n",
+              "      <td>Creates practical applications using AI models and APIs.</td>\n",
+              "      <td>6.37</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>2</th>\n",
+              "      <td>JOB0003</td>\n",
+              "      <td>Business Intelligence Developer</td>\n",
+              "      <td>BluePeak Systems</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>Bhubaneswar</td>\n",
+              "      <td>0</td>\n",
+              "      <td>[sql, power bi, excel, data analysis, data cleaning, statistics]</td>\n",
+              "      <td>Designs dashboards and data models for business decisions.</td>\n",
+              "      <td>6.29</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>3</th>\n",
+              "      <td>JOB0004</td>\n",
+              "      <td>NLP Engineer</td>\n",
+              "      <td>Cedar Labs</td>\n",
+              "      <td>AI</td>\n",
+              "      <td>Bengaluru</td>\n",
+              "      <td>3</td>\n",
+              "      <td>[python, natural language processing, machine learning, deep learning, pytorch, generative ai]</td>\n",
+              "      <td>Builds systems that process and understand human language.</td>\n",
+              "      <td>12.77</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>4</th>\n",
+              "      <td>JOB0005</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>Vertex Cloud</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>Remote</td>\n",
+              "      <td>5</td>\n",
+              "      <td>[python, sql, statistics, machine learning, pandas, numpy, scikit-learn, generative ai]</td>\n",
+              "      <td>Uses statistics and machine learning to solve data problems.</td>\n",
+              "      <td>10.71</td>\n",
+              "    </tr>\n",
+              "  </tbody>\n",
+              "</table>\n",
+              "</div>\n",
+              "    <div class=\"colab-df-buttons\">\n",
+              "\n",
+              "  <div class=\"colab-df-container\">\n",
+              "    <button class=\"colab-df-convert\" onclick=\"convertToInteractive('df-3e08cc51-242d-43ed-a63e-d45ab4a64310')\"\n",
+              "            title=\"Convert this dataframe to an interactive table.\"\n",
+              "            style=\"display:none;\">\n",
+              "\n",
+              "  <svg xmlns=\"http://www.w3.org/2000/svg\" height=\"24px\" viewBox=\"0 -960 960 960\">\n",
+              "    <path d=\"M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z\"/>\n",
+              "  </svg>\n",
+              "    </button>\n",
+              "\n",
+              "  <style>\n",
+              "    .colab-df-container {\n",
+              "      display:flex;\n",
+              "      gap: 12px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert {\n",
+              "      background-color: #E8F0FE;\n",
+              "      border: none;\n",
+              "      border-radius: 50%;\n",
+              "      cursor: pointer;\n",
+              "      display: none;\n",
+              "      fill: #1967D2;\n",
+              "      height: 32px;\n",
+              "      padding: 0 0 0 0;\n",
+              "      width: 32px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert:hover {\n",
+              "      background-color: #E2EBFA;\n",
+              "      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);\n",
+              "      fill: #174EA6;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-buttons div {\n",
+              "      margin-bottom: 4px;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert {\n",
+              "      background-color: #3B4455;\n",
+              "      fill: #D2E3FC;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert:hover {\n",
+              "      background-color: #434B5C;\n",
+              "      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);\n",
+              "      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));\n",
+              "      fill: #FFFFFF;\n",
+              "    }\n",
+              "  </style>\n",
+              "\n",
+              "    <script>\n",
+              "      const buttonEl =\n",
+              "        document.querySelector('#df-3e08cc51-242d-43ed-a63e-d45ab4a64310 button.colab-df-convert');\n",
+              "      buttonEl.style.display =\n",
+              "        google.colab.kernel.accessAllowed ? 'block' : 'none';\n",
+              "\n",
+              "      async function convertToInteractive(key) {\n",
+              "        const element = document.querySelector('#df-3e08cc51-242d-43ed-a63e-d45ab4a64310');\n",
+              "        const dataTable =\n",
+              "          await google.colab.kernel.invokeFunction('convertToInteractive',\n",
+              "                                                    [key], {});\n",
+              "        if (!dataTable) return;\n",
+              "\n",
+              "        const docLinkHtml = 'Like what you see? Visit the ' +\n",
+              "          '<a target=\"_blank\" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'\n",
+              "          + ' to learn more about interactive tables.';\n",
+              "        element.innerHTML = '';\n",
+              "        dataTable['output_type'] = 'display_data';\n",
+              "        await google.colab.output.renderOutput(dataTable, element);\n",
+              "        const docLink = document.createElement('div');\n",
+              "        docLink.innerHTML = docLinkHtml;\n",
+              "        element.appendChild(docLink);\n",
+              "      }\n",
+              "    </script>\n",
+              "  </div>\n",
+              "\n",
+              "\n",
+              "    </div>\n",
+              "  </div>\n"
+            ],
+            "application/vnd.google.colaboratory.intrinsic+json": {
+              "type": "dataframe",
+              "summary": "{\n  \"name\": \"display(jobs_df\",\n  \"rows\": 5,\n  \"fields\": [\n    {\n      \"column\": \"job_id\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 5,\n        \"samples\": [\n          \"JOB0002\",\n          \"JOB0005\",\n          \"JOB0003\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"title\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 4,\n        \"samples\": [\n          \"AI Application Developer\",\n          \"NLP Engineer\",\n          \"Data Scientist\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"company\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 5,\n        \"samples\": [\n          \"NovaWorks\",\n          \"Vertex Cloud\",\n          \"BluePeak Systems\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"category\",\n      \"properties\": {\n        \"dtype\": \"category\",\n        \"num_unique_values\": 2,\n        \"samples\": [\n          \"AI\",\n          \"Data\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"location\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 4,\n        \"samples\": [\n          \"Bhubaneswar\",\n          \"Remote\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"experience_years\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 2,\n        \"min\": 0,\n        \"max\": 5,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          0,\n          5\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"required_skills\",\n      \"properties\": {\n        \"dtype\": \"object\",\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"description\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 4,\n        \"samples\": [\n          \"Creates practical applications using AI models and APIs.\",\n          \"Builds systems that process and understand human language.\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"salary_lpa\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 2.9334075748180646,\n        \"min\": 6.29,\n        \"max\": 12.77,\n        \"num_unique_values\": 5,\n        \"samples\": [\n          6.37,\n          10.71\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
             }
-            // Intensifiers make the next matched word count more strongly.
-            if (BOOSTERS.containsKey(word)) {
-                modifier = BOOSTERS.get(word);
-                continue;
+          },
+          "metadata": {}
+        }
+      ],
+      "source": [
+        "rng = np.random.default_rng(42)\n",
+        "companies = [\"Northstar Digital\",\"BluePeak Systems\",\"Orbit Analytics\",\"Cedar Labs\",\"BrightPath Tech\",\"NovaWorks\",\"Vertex Cloud\",\"PixelRiver\"]\n",
+        "locations = [\"Remote\",\"Bengaluru\",\"Hyderabad\",\"Pune\",\"Delhi NCR\",\"Bhubaneswar\"]\n",
+        "job_rows = []\n",
+        "\n",
+        "for i in range(500):\n",
+        "    role = CAREER_ROLES[int(rng.integers(0, len(CAREER_ROLES)))]\n",
+        "    required = list(role[\"skills\"])\n",
+        "    if rng.random() < 0.35:\n",
+        "        required.append(str(rng.choice(SKILL_CATALOG)))\n",
+        "    exp = int(rng.integers(0, 6))\n",
+        "    midpoint = (role[\"salary_min_lpa\"] + role[\"salary_max_lpa\"]) / 2\n",
+        "    salary = max(1.5, midpoint + 0.45 * exp + rng.normal(0, 0.9))\n",
+        "    job_rows.append({\n",
+        "        \"job_id\":f\"JOB{i+1:04d}\", \"title\":role[\"role\"], \"company\":str(rng.choice(companies)),\n",
+        "        \"category\":role[\"category\"], \"location\":str(rng.choice(locations)),\n",
+        "        \"experience_years\":exp, \"required_skills\":required,\n",
+        "        \"description\":role[\"description\"], \"salary_lpa\":round(salary,2)\n",
+        "    })\n",
+        "\n",
+        "jobs_df = pd.DataFrame(job_rows)\n",
+        "print(\"Synthetic vacancies:\", len(jobs_df))\n",
+        "display(jobs_df.head())"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "cb852881",
+      "metadata": {
+        "id": "cb852881"
+      },
+      "source": [
+        "## 4. Candidate profile — edit this cell"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 5,
+      "id": "3a2e841d",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "3a2e841d",
+        "outputId": "248c2b11-c73f-43fc-c0b0-ccf18c303a58"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "{\n",
+            "  \"name\": \"Subhankar Mahapatra\",\n",
+            "  \"education\": \"BCA\",\n",
+            "  \"experience_years\": 0,\n",
+            "  \"skills\": [\n",
+            "    \"communication\",\n",
+            "    \"css\",\n",
+            "    \"excel\",\n",
+            "    \"git\",\n",
+            "    \"html\",\n",
+            "    \"numpy\",\n",
+            "    \"pandas\",\n",
+            "    \"python\",\n",
+            "    \"sql\"\n",
+            "  ],\n",
+            "  \"interests\": [\n",
+            "    \"artificial intelligence\",\n",
+            "    \"building\",\n",
+            "    \"data\",\n",
+            "    \"programming\"\n",
+            "  ],\n",
+            "  \"preferred_location\": \"Remote\",\n",
+            "  \"target_salary_lpa\": 4.0\n",
+            "}\n"
+          ]
+        }
+      ],
+      "source": [
+        "candidate = {\n",
+        "    \"name\": \"Subhankar Mahapatra\",\n",
+        "    \"education\": \"BCA\",\n",
+        "    \"experience_years\": 0,\n",
+        "    \"skills\": [\"python\",\"sql\",\"excel\",\"pandas\",\"numpy\",\"html\",\"css\",\"communication\",\"git\"],\n",
+        "    \"interests\": [\"data\",\"ai\",\"programming\",\"building\"],\n",
+        "    \"preferred_location\": \"Remote\",\n",
+        "    \"target_salary_lpa\": 4.0\n",
+        "}\n",
+        "candidate[\"skills\"] = normalize_skill_list(candidate[\"skills\"])\n",
+        "candidate[\"interests\"] = normalize_skill_list(candidate[\"interests\"])\n",
+        "print(json.dumps(candidate, indent=2))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "187b0b38",
+      "metadata": {
+        "id": "187b0b38"
+      },
+      "source": [
+        "## 5. Career recommendation engine — explainable skill matching"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 6,
+      "id": "bc2a9e7b",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 439
+        },
+        "id": "bc2a9e7b",
+        "outputId": "6fa44154-5782-480d-cdee-9a26e6a27908"
+      },
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "                   Career  Category  Match_Score  Skill_Coverage  \\\n",
+              "0            Data Analyst      Data         52.4            57.1   \n",
+              "1          Data Scientist      Data         52.4            57.1   \n",
+              "2        Python Developer  Software         47.6            42.9   \n",
+              "3         Product Analyst  Business         46.7            50.0   \n",
+              "4    Full Stack Developer  Software         42.2            44.4   \n",
+              "5      Frontend Developer  Software         41.0            42.9   \n",
+              "6          UI/UX Designer    Design         40.0            50.0   \n",
+              "7  QA Automation Engineer  Software         40.0            50.0   \n",
+              "\n",
+              "               Matched_Skills                                 Missing_Skills  \\\n",
+              "0  excel, pandas, python, sql       data visualization, power bi, statistics   \n",
+              "1  numpy, pandas, python, sql     machine learning, scikit-learn, statistics   \n",
+              "2            git, python, sql     django, fastapi, problem solving, rest api   \n",
+              "3   communication, excel, sql            data analysis, power bi, statistics   \n",
+              "4         css, git, html, sql  javascript, mongodb, node.js, react, rest api   \n",
+              "5              css, git, html           figma, javascript, react, typescript   \n",
+              "6    communication, css, html            critical thinking, figma, ui design   \n",
+              "7            git, python, sql          javascript, problem solving, rest api   \n",
+              "\n",
+              "  Indicative_Range_LPA  \n",
+              "0              3.0–7.0  \n",
+              "1             5.0–12.0  \n",
+              "2              3.0–8.5  \n",
+              "3             4.0–10.0  \n",
+              "4             4.0–10.0  \n",
+              "5              2.8–7.0  \n",
+              "6              2.5–7.0  \n",
+              "7              3.0–8.0  "
+            ],
+            "text/html": [
+              "\n",
+              "  <div id=\"df-faacdc1b-18d3-4d3f-a825-1ed0054e2dad\" class=\"colab-df-container\">\n",
+              "    <div>\n",
+              "<style scoped>\n",
+              "    .dataframe tbody tr th:only-of-type {\n",
+              "        vertical-align: middle;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe tbody tr th {\n",
+              "        vertical-align: top;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe thead th {\n",
+              "        text-align: right;\n",
+              "    }\n",
+              "</style>\n",
+              "<table border=\"1\" class=\"dataframe\">\n",
+              "  <thead>\n",
+              "    <tr style=\"text-align: right;\">\n",
+              "      <th></th>\n",
+              "      <th>Career</th>\n",
+              "      <th>Category</th>\n",
+              "      <th>Match_Score</th>\n",
+              "      <th>Skill_Coverage</th>\n",
+              "      <th>Matched_Skills</th>\n",
+              "      <th>Missing_Skills</th>\n",
+              "      <th>Indicative_Range_LPA</th>\n",
+              "    </tr>\n",
+              "  </thead>\n",
+              "  <tbody>\n",
+              "    <tr>\n",
+              "      <th>0</th>\n",
+              "      <td>Data Analyst</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>52.4</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>excel, pandas, python, sql</td>\n",
+              "      <td>data visualization, power bi, statistics</td>\n",
+              "      <td>3.0–7.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>1</th>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>52.4</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>numpy, pandas, python, sql</td>\n",
+              "      <td>machine learning, scikit-learn, statistics</td>\n",
+              "      <td>5.0–12.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>2</th>\n",
+              "      <td>Python Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>47.6</td>\n",
+              "      <td>42.9</td>\n",
+              "      <td>git, python, sql</td>\n",
+              "      <td>django, fastapi, problem solving, rest api</td>\n",
+              "      <td>3.0–8.5</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>3</th>\n",
+              "      <td>Product Analyst</td>\n",
+              "      <td>Business</td>\n",
+              "      <td>46.7</td>\n",
+              "      <td>50.0</td>\n",
+              "      <td>communication, excel, sql</td>\n",
+              "      <td>data analysis, power bi, statistics</td>\n",
+              "      <td>4.0–10.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>4</th>\n",
+              "      <td>Full Stack Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>42.2</td>\n",
+              "      <td>44.4</td>\n",
+              "      <td>css, git, html, sql</td>\n",
+              "      <td>javascript, mongodb, node.js, react, rest api</td>\n",
+              "      <td>4.0–10.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>5</th>\n",
+              "      <td>Frontend Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>41.0</td>\n",
+              "      <td>42.9</td>\n",
+              "      <td>css, git, html</td>\n",
+              "      <td>figma, javascript, react, typescript</td>\n",
+              "      <td>2.8–7.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>6</th>\n",
+              "      <td>UI/UX Designer</td>\n",
+              "      <td>Design</td>\n",
+              "      <td>40.0</td>\n",
+              "      <td>50.0</td>\n",
+              "      <td>communication, css, html</td>\n",
+              "      <td>critical thinking, figma, ui design</td>\n",
+              "      <td>2.5–7.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>7</th>\n",
+              "      <td>QA Automation Engineer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>40.0</td>\n",
+              "      <td>50.0</td>\n",
+              "      <td>git, python, sql</td>\n",
+              "      <td>javascript, problem solving, rest api</td>\n",
+              "      <td>3.0–8.0</td>\n",
+              "    </tr>\n",
+              "  </tbody>\n",
+              "</table>\n",
+              "</div>\n",
+              "    <div class=\"colab-df-buttons\">\n",
+              "\n",
+              "  <div class=\"colab-df-container\">\n",
+              "    <button class=\"colab-df-convert\" onclick=\"convertToInteractive('df-faacdc1b-18d3-4d3f-a825-1ed0054e2dad')\"\n",
+              "            title=\"Convert this dataframe to an interactive table.\"\n",
+              "            style=\"display:none;\">\n",
+              "\n",
+              "  <svg xmlns=\"http://www.w3.org/2000/svg\" height=\"24px\" viewBox=\"0 -960 960 960\">\n",
+              "    <path d=\"M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z\"/>\n",
+              "  </svg>\n",
+              "    </button>\n",
+              "\n",
+              "  <style>\n",
+              "    .colab-df-container {\n",
+              "      display:flex;\n",
+              "      gap: 12px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert {\n",
+              "      background-color: #E8F0FE;\n",
+              "      border: none;\n",
+              "      border-radius: 50%;\n",
+              "      cursor: pointer;\n",
+              "      display: none;\n",
+              "      fill: #1967D2;\n",
+              "      height: 32px;\n",
+              "      padding: 0 0 0 0;\n",
+              "      width: 32px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert:hover {\n",
+              "      background-color: #E2EBFA;\n",
+              "      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);\n",
+              "      fill: #174EA6;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-buttons div {\n",
+              "      margin-bottom: 4px;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert {\n",
+              "      background-color: #3B4455;\n",
+              "      fill: #D2E3FC;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert:hover {\n",
+              "      background-color: #434B5C;\n",
+              "      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);\n",
+              "      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));\n",
+              "      fill: #FFFFFF;\n",
+              "    }\n",
+              "  </style>\n",
+              "\n",
+              "    <script>\n",
+              "      const buttonEl =\n",
+              "        document.querySelector('#df-faacdc1b-18d3-4d3f-a825-1ed0054e2dad button.colab-df-convert');\n",
+              "      buttonEl.style.display =\n",
+              "        google.colab.kernel.accessAllowed ? 'block' : 'none';\n",
+              "\n",
+              "      async function convertToInteractive(key) {\n",
+              "        const element = document.querySelector('#df-faacdc1b-18d3-4d3f-a825-1ed0054e2dad');\n",
+              "        const dataTable =\n",
+              "          await google.colab.kernel.invokeFunction('convertToInteractive',\n",
+              "                                                    [key], {});\n",
+              "        if (!dataTable) return;\n",
+              "\n",
+              "        const docLinkHtml = 'Like what you see? Visit the ' +\n",
+              "          '<a target=\"_blank\" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'\n",
+              "          + ' to learn more about interactive tables.';\n",
+              "        element.innerHTML = '';\n",
+              "        dataTable['output_type'] = 'display_data';\n",
+              "        await google.colab.output.renderOutput(dataTable, element);\n",
+              "        const docLink = document.createElement('div');\n",
+              "        docLink.innerHTML = docLinkHtml;\n",
+              "        element.appendChild(docLink);\n",
+              "      }\n",
+              "    </script>\n",
+              "  </div>\n",
+              "\n",
+              "\n",
+              "  <div id=\"id_7ddd29ee-b91c-46da-832d-7df5951b4d62\">\n",
+              "    <style>\n",
+              "      .colab-df-generate {\n",
+              "        background-color: #E8F0FE;\n",
+              "        border: none;\n",
+              "        border-radius: 50%;\n",
+              "        cursor: pointer;\n",
+              "        display: none;\n",
+              "        fill: #1967D2;\n",
+              "        height: 32px;\n",
+              "        padding: 0 0 0 0;\n",
+              "        width: 32px;\n",
+              "      }\n",
+              "\n",
+              "      .colab-df-generate:hover {\n",
+              "        background-color: #E2EBFA;\n",
+              "        box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);\n",
+              "        fill: #174EA6;\n",
+              "      }\n",
+              "\n",
+              "      [theme=dark] .colab-df-generate {\n",
+              "        background-color: #3B4455;\n",
+              "        fill: #D2E3FC;\n",
+              "      }\n",
+              "\n",
+              "      [theme=dark] .colab-df-generate:hover {\n",
+              "        background-color: #434B5C;\n",
+              "        box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);\n",
+              "        filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));\n",
+              "        fill: #FFFFFF;\n",
+              "      }\n",
+              "    </style>\n",
+              "    <button class=\"colab-df-generate\" onclick=\"generateWithVariable('career_recommendations')\"\n",
+              "            title=\"Generate code using this dataframe.\"\n",
+              "            style=\"display:none;\">\n",
+              "\n",
+              "  <svg xmlns=\"http://www.w3.org/2000/svg\" height=\"24px\"viewBox=\"0 0 24 24\"\n",
+              "       width=\"24px\">\n",
+              "    <path d=\"M7,19H8.4L18.45,9,17,7.55,7,17.6ZM5,21V16.75L18.45,3.32a2,2,0,0,1,2.83,0l1.4,1.43a1.91,1.91,0,0,1,.58,1.4,1.91,1.91,0,0,1-.58,1.4L9.25,21ZM18.45,9,17,7.55Zm-12,3A5.31,5.31,0,0,0,4.9,8.1,5.31,5.31,0,0,0,1,6.5,5.31,5.31,0,0,0,4.9,4.9,5.31,5.31,0,0,0,6.5,1,5.31,5.31,0,0,0,8.1,4.9,5.31,5.31,0,0,0,12,6.5,5.46,5.46,0,0,0,6.5,12Z\"/>\n",
+              "  </svg>\n",
+              "    </button>\n",
+              "    <script>\n",
+              "      (() => {\n",
+              "      const buttonEl =\n",
+              "        document.querySelector('#id_7ddd29ee-b91c-46da-832d-7df5951b4d62 button.colab-df-generate');\n",
+              "      buttonEl.style.display =\n",
+              "        google.colab.kernel.accessAllowed ? 'block' : 'none';\n",
+              "\n",
+              "      buttonEl.onclick = () => {\n",
+              "        google.colab.notebook.generateWithVariable('career_recommendations');\n",
+              "      }\n",
+              "      })();\n",
+              "    </script>\n",
+              "  </div>\n",
+              "\n",
+              "    </div>\n",
+              "  </div>\n"
+            ],
+            "application/vnd.google.colaboratory.intrinsic+json": {
+              "type": "dataframe",
+              "variable_name": "career_recommendations",
+              "summary": "{\n  \"name\": \"career_recommendations\",\n  \"rows\": 8,\n  \"fields\": [\n    {\n      \"column\": \"Career\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 8,\n        \"samples\": [\n          \"Data Scientist\",\n          \"Frontend Developer\",\n          \"Data Analyst\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Category\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 4,\n        \"samples\": [\n          \"Software\",\n          \"Design\",\n          \"Data\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Match_Score\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 5.24198367577989,\n        \"min\": 40.0,\n        \"max\": 52.4,\n        \"num_unique_values\": 6,\n        \"samples\": [\n          52.4,\n          47.6,\n          40.0\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Skill_Coverage\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 5.72063932491066,\n        \"min\": 42.9,\n        \"max\": 57.1,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          42.9,\n          44.4,\n          57.1\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Matched_Skills\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 7,\n        \"samples\": [\n          \"excel, pandas, python, sql\",\n          \"numpy, pandas, python, sql\",\n          \"css, git, html\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Missing_Skills\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 8,\n        \"samples\": [\n          \"machine learning, scikit-learn, statistics\",\n          \"figma, javascript, react, typescript\",\n          \"data visualization, power bi, statistics\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Indicative_Range_LPA\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 7,\n        \"samples\": [\n          \"3.0\\u20137.0\",\n          \"5.0\\u201312.0\",\n          \"2.5\\u20137.0\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
             }
-            // Dampeners make the next matched word count less strongly.
-            if (DAMPENERS.containsKey(word)) {
-                modifier = DAMPENERS.get(word);
-                continue;
+          },
+          "metadata": {}
+        }
+      ],
+      "source": [
+        "def recommend_careers(profile, top_n=8):\n",
+        "    user_skills = set(normalize_skill_list(profile[\"skills\"]))\n",
+        "    user_interests = set(normalize_skill_list(profile.get(\"interests\", [])))\n",
+        "    rows = []\n",
+        "    for role in CAREER_ROLES:\n",
+        "        required = set(role[\"skills\"])\n",
+        "        matched = sorted(user_skills & required)\n",
+        "        missing = sorted(required - user_skills)\n",
+        "        coverage = len(matched) / max(1, len(required))\n",
+        "        interest_match = len(user_interests & set(role[\"interests\"])) / max(1, len(set(role[\"interests\"])))\n",
+        "        score = 0.80 * coverage + 0.20 * interest_match\n",
+        "        rows.append({\n",
+        "            \"Career\":role[\"role\"], \"Category\":role[\"category\"],\n",
+        "            \"Match_Score\":round(score*100,1), \"Skill_Coverage\":round(coverage*100,1),\n",
+        "            \"Matched_Skills\":\", \".join(matched) or \"None yet\",\n",
+        "            \"Missing_Skills\":\", \".join(missing),\n",
+        "            \"Indicative_Range_LPA\":f'{role[\"salary_min_lpa\"]:.1f}–{role[\"salary_max_lpa\"]:.1f}'\n",
+        "        })\n",
+        "    return pd.DataFrame(rows).sort_values(\"Match_Score\",ascending=False).head(top_n).reset_index(drop=True)\n",
+        "\n",
+        "career_recommendations = recommend_careers(candidate)\n",
+        "display(career_recommendations)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "e2f048ab",
+      "metadata": {
+        "id": "e2f048ab"
+      },
+      "source": [
+        "## 6. TF-IDF content-based career recommendations"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 7,
+      "id": "23ee4b58",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 300
+        },
+        "id": "23ee4b58",
+        "outputId": "d1037f9b-8b57-4473-d5f3-42d7fde969fe"
+      },
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "                               role  category  \\\n",
+              "1                    Data Scientist      Data   \n",
+              "9   Business Intelligence Developer      Data   \n",
+              "0                      Data Analyst      Data   \n",
+              "3          AI Application Developer        AI   \n",
+              "13                 Python Developer  Software   \n",
+              "6              Full Stack Developer  Software   \n",
+              "4                Frontend Developer  Software   \n",
+              "16                  Product Analyst  Business   \n",
+              "\n",
+              "                                                              description  \\\n",
+              "1            Uses statistics and machine learning to solve data problems.   \n",
+              "9              Designs dashboards and data models for business decisions.   \n",
+              "0                      Turns raw data into reports and business insights.   \n",
+              "3                Creates practical applications using AI models and APIs.   \n",
+              "13  Builds software, automation scripts and backend services with Python.   \n",
+              "6                          Develops both frontend and backend components.   \n",
+              "4                       Builds responsive and accessible user interfaces.   \n",
+              "16                    Analyzes product usage and recommends improvements.   \n",
+              "\n",
+              "    Similarity_Percent  \n",
+              "1                 22.8  \n",
+              "9                 19.3  \n",
+              "0                 19.0  \n",
+              "3                 15.8  \n",
+              "13                14.4  \n",
+              "6                 12.1  \n",
+              "4                 11.4  \n",
+              "16                10.8  "
+            ],
+            "text/html": [
+              "\n",
+              "  <div id=\"df-ffc8cb33-48d9-421b-b20f-b23866c3efc4\" class=\"colab-df-container\">\n",
+              "    <div>\n",
+              "<style scoped>\n",
+              "    .dataframe tbody tr th:only-of-type {\n",
+              "        vertical-align: middle;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe tbody tr th {\n",
+              "        vertical-align: top;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe thead th {\n",
+              "        text-align: right;\n",
+              "    }\n",
+              "</style>\n",
+              "<table border=\"1\" class=\"dataframe\">\n",
+              "  <thead>\n",
+              "    <tr style=\"text-align: right;\">\n",
+              "      <th></th>\n",
+              "      <th>role</th>\n",
+              "      <th>category</th>\n",
+              "      <th>description</th>\n",
+              "      <th>Similarity_Percent</th>\n",
+              "    </tr>\n",
+              "  </thead>\n",
+              "  <tbody>\n",
+              "    <tr>\n",
+              "      <th>1</th>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>Uses statistics and machine learning to solve data problems.</td>\n",
+              "      <td>22.8</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>9</th>\n",
+              "      <td>Business Intelligence Developer</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>Designs dashboards and data models for business decisions.</td>\n",
+              "      <td>19.3</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>0</th>\n",
+              "      <td>Data Analyst</td>\n",
+              "      <td>Data</td>\n",
+              "      <td>Turns raw data into reports and business insights.</td>\n",
+              "      <td>19.0</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>3</th>\n",
+              "      <td>AI Application Developer</td>\n",
+              "      <td>AI</td>\n",
+              "      <td>Creates practical applications using AI models and APIs.</td>\n",
+              "      <td>15.8</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>13</th>\n",
+              "      <td>Python Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>Builds software, automation scripts and backend services with Python.</td>\n",
+              "      <td>14.4</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>6</th>\n",
+              "      <td>Full Stack Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>Develops both frontend and backend components.</td>\n",
+              "      <td>12.1</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>4</th>\n",
+              "      <td>Frontend Developer</td>\n",
+              "      <td>Software</td>\n",
+              "      <td>Builds responsive and accessible user interfaces.</td>\n",
+              "      <td>11.4</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>16</th>\n",
+              "      <td>Product Analyst</td>\n",
+              "      <td>Business</td>\n",
+              "      <td>Analyzes product usage and recommends improvements.</td>\n",
+              "      <td>10.8</td>\n",
+              "    </tr>\n",
+              "  </tbody>\n",
+              "</table>\n",
+              "</div>\n",
+              "    <div class=\"colab-df-buttons\">\n",
+              "\n",
+              "  <div class=\"colab-df-container\">\n",
+              "    <button class=\"colab-df-convert\" onclick=\"convertToInteractive('df-ffc8cb33-48d9-421b-b20f-b23866c3efc4')\"\n",
+              "            title=\"Convert this dataframe to an interactive table.\"\n",
+              "            style=\"display:none;\">\n",
+              "\n",
+              "  <svg xmlns=\"http://www.w3.org/2000/svg\" height=\"24px\" viewBox=\"0 -960 960 960\">\n",
+              "    <path d=\"M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z\"/>\n",
+              "  </svg>\n",
+              "    </button>\n",
+              "\n",
+              "  <style>\n",
+              "    .colab-df-container {\n",
+              "      display:flex;\n",
+              "      gap: 12px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert {\n",
+              "      background-color: #E8F0FE;\n",
+              "      border: none;\n",
+              "      border-radius: 50%;\n",
+              "      cursor: pointer;\n",
+              "      display: none;\n",
+              "      fill: #1967D2;\n",
+              "      height: 32px;\n",
+              "      padding: 0 0 0 0;\n",
+              "      width: 32px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert:hover {\n",
+              "      background-color: #E2EBFA;\n",
+              "      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);\n",
+              "      fill: #174EA6;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-buttons div {\n",
+              "      margin-bottom: 4px;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert {\n",
+              "      background-color: #3B4455;\n",
+              "      fill: #D2E3FC;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert:hover {\n",
+              "      background-color: #434B5C;\n",
+              "      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);\n",
+              "      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));\n",
+              "      fill: #FFFFFF;\n",
+              "    }\n",
+              "  </style>\n",
+              "\n",
+              "    <script>\n",
+              "      const buttonEl =\n",
+              "        document.querySelector('#df-ffc8cb33-48d9-421b-b20f-b23866c3efc4 button.colab-df-convert');\n",
+              "      buttonEl.style.display =\n",
+              "        google.colab.kernel.accessAllowed ? 'block' : 'none';\n",
+              "\n",
+              "      async function convertToInteractive(key) {\n",
+              "        const element = document.querySelector('#df-ffc8cb33-48d9-421b-b20f-b23866c3efc4');\n",
+              "        const dataTable =\n",
+              "          await google.colab.kernel.invokeFunction('convertToInteractive',\n",
+              "                                                    [key], {});\n",
+              "        if (!dataTable) return;\n",
+              "\n",
+              "        const docLinkHtml = 'Like what you see? Visit the ' +\n",
+              "          '<a target=\"_blank\" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'\n",
+              "          + ' to learn more about interactive tables.';\n",
+              "        element.innerHTML = '';\n",
+              "        dataTable['output_type'] = 'display_data';\n",
+              "        await google.colab.output.renderOutput(dataTable, element);\n",
+              "        const docLink = document.createElement('div');\n",
+              "        docLink.innerHTML = docLinkHtml;\n",
+              "        element.appendChild(docLink);\n",
+              "      }\n",
+              "    </script>\n",
+              "  </div>\n",
+              "\n",
+              "\n",
+              "    </div>\n",
+              "  </div>\n"
+            ],
+            "application/vnd.google.colaboratory.intrinsic+json": {
+              "type": "dataframe",
+              "summary": "{\n  \"name\": \"display(tfidf_recommendations(candidate))\",\n  \"rows\": 8,\n  \"fields\": [\n    {\n      \"column\": \"role\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 8,\n        \"samples\": [\n          \"Business Intelligence Developer\",\n          \"Full Stack Developer\",\n          \"Data Scientist\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"category\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 4,\n        \"samples\": [\n          \"AI\",\n          \"Business\",\n          \"Data\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"description\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 8,\n        \"samples\": [\n          \"Designs dashboards and data models for business decisions.\",\n          \"Develops both frontend and backend components.\",\n          \"Uses statistics and machine learning to solve data problems.\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Similarity_Percent\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 4.332930384195633,\n        \"min\": 10.8,\n        \"max\": 22.8,\n        \"num_unique_values\": 8,\n        \"samples\": [\n          19.3,\n          12.1,\n          22.8\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
             }
-
-            boolean negated = negationWindow > 0;
-            Double weight = SENTIMENT.get(word);
-            if (weight != null) {
-                score += (negated ? -weight : weight) * modifier;
-                r.matchedWords.add(word + (negated ? " [negated]" : ""));
+          },
+          "metadata": {}
+        }
+      ],
+      "source": [
+        "tfidf = TfidfVectorizer(ngram_range=(1,2), stop_words=\"english\")\n",
+        "career_matrix = tfidf.fit_transform(career_df[\"profile_text\"])\n",
+        "\n",
+        "def tfidf_recommendations(profile, top_n=8):\n",
+        "    query = \" \".join(profile[\"skills\"] + profile.get(\"interests\", []))\n",
+        "    query_vector = tfidf.transform([query])\n",
+        "    scores = cosine_similarity(query_vector, career_matrix).ravel()\n",
+        "    result = career_df[[\"role\",\"category\",\"description\"]].copy()\n",
+        "    result[\"Similarity_Percent\"] = (scores*100).round(1)\n",
+        "    return result.sort_values(\"Similarity_Percent\",ascending=False).head(top_n)\n",
+        "\n",
+        "display(tfidf_recommendations(candidate))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "521fd42e",
+      "metadata": {
+        "id": "521fd42e"
+      },
+      "source": [
+        "## 7. Skill-gap analysis and personalized learning roadmap"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 8,
+      "id": "7f980c24",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "7f980c24",
+        "outputId": "b9344905-ccca-4ec6-d2ed-053dc8deea48"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Target career: Data Analyst\n",
+            "Skill coverage: 57.1 %\n",
+            "Matched: ['excel', 'pandas', 'python', 'sql']\n",
+            "Skill gaps: ['data visualization', 'power bi', 'statistics']\n",
+            "\n",
+            "Suggested learning roadmap:\n",
+            "Phase 1: Excel and SQL fundamentals\n",
+            "Phase 2: Python with Pandas\n",
+            "Phase 3: Statistics and visualization\n",
+            "Phase 4: Build a dashboard portfolio\n"
+          ]
+        }
+      ],
+      "source": [
+        "def skill_gap_report(profile, career_name):\n",
+        "    role = next((r for r in CAREER_ROLES if r[\"role\"] == career_name), None)\n",
+        "    if role is None:\n",
+        "        raise ValueError(\"Career not found in the knowledge base.\")\n",
+        "    current, required = set(normalize_skill_list(profile[\"skills\"])), set(role[\"skills\"])\n",
+        "    matched, missing = sorted(current & required), sorted(required - current)\n",
+        "    return {\n",
+        "        \"career\":career_name, \"matched_skills\":matched, \"missing_skills\":missing,\n",
+        "        \"coverage_percent\":round(100*len(matched)/max(1,len(required)),1),\n",
+        "        \"roadmap\":role[\"learning\"]\n",
+        "    }\n",
+        "\n",
+        "target_career = career_recommendations.iloc[0][\"Career\"]\n",
+        "gap = skill_gap_report(candidate,target_career)\n",
+        "print(\"Target career:\",gap[\"career\"])\n",
+        "print(\"Skill coverage:\",gap[\"coverage_percent\"],\"%\")\n",
+        "print(\"Matched:\",gap[\"matched_skills\"])\n",
+        "print(\"Skill gaps:\",gap[\"missing_skills\"])\n",
+        "print(\"\\nSuggested learning roadmap:\")\n",
+        "for phase,task in enumerate(gap[\"roadmap\"],1):\n",
+        "    print(f\"Phase {phase}: {task}\")"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "4f331ead",
+      "metadata": {
+        "id": "4f331ead"
+      },
+      "source": [
+        "## 8. Resume skill extraction — paste plain text"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 9,
+      "id": "8d66cc32",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "8d66cc32",
+        "outputId": "1d29c7ec-ee85-4588-f1b2-5ab9e09bba2d"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Detected skills: ['artificial intelligence', 'communication', 'css', 'data analysis', 'excel', 'git', 'html', 'numpy', 'pandas', 'python', 'sql']\n",
+            "Profile skills not detected in resume: []\n"
+          ]
+        }
+      ],
+      "source": [
+        "resume_text = '''\n",
+        "BCA student with experience in Python, SQL, Excel, Pandas and NumPy.\n",
+        "Created data analysis dashboards and academic projects using Python.\n",
+        "Familiar with HTML, CSS, Git and communication in team projects.\n",
+        "Interested in data analytics, artificial intelligence and software development.\n",
+        "'''\n",
+        "\n",
+        "def extract_skills_from_resume(text, catalog=SKILL_CATALOG):\n",
+        "    normalized_text = normalize_skill(text)\n",
+        "    found = []\n",
+        "    for skill in catalog:\n",
+        "        canonical = normalize_skill(skill)\n",
+        "        pattern = r\"(?<![a-z0-9])\" + re.escape(canonical) + r\"(?![a-z0-9])\"\n",
+        "        if re.search(pattern, normalized_text):\n",
+        "            found.append(canonical)\n",
+        "    return sorted(set(found))\n",
+        "\n",
+        "resume_skills = extract_skills_from_resume(resume_text)\n",
+        "print(\"Detected skills:\",resume_skills)\n",
+        "print(\"Profile skills not detected in resume:\",sorted(set(candidate[\"skills\"])-set(resume_skills)))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "77c3de40",
+      "metadata": {
+        "id": "77c3de40"
+      },
+      "source": [
+        "## 9. Job matching and ranking"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 10,
+      "id": "5973004d",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 782
+        },
+        "id": "5973004d",
+        "outputId": "ceb186d5-5624-4005-f769-66aaa626ed7b"
+      },
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "      Job_ID           Title          Company   Location  Experience_Required  \\\n",
+              "352  JOB0353    Data Analyst        NovaWorks     Remote                    2   \n",
+              "257  JOB0258  Data Scientist  BrightPath Tech       Pune                    2   \n",
+              "280  JOB0281  Data Scientist       PixelRiver       Pune                    2   \n",
+              "457  JOB0458  Data Scientist  Orbit Analytics  Hyderabad                    2   \n",
+              "298  JOB0299  Data Scientist       PixelRiver  Delhi NCR                    1   \n",
+              "73   JOB0074  Data Scientist  BrightPath Tech  Bengaluru                    0   \n",
+              "461  JOB0462  Data Scientist       Cedar Labs  Bengaluru                    1   \n",
+              "26   JOB0027  Data Scientist       Cedar Labs  Delhi NCR                    0   \n",
+              "413  JOB0414    Data Analyst        NovaWorks  Hyderabad                    2   \n",
+              "30   JOB0031    Data Analyst  Orbit Analytics  Delhi NCR                    1   \n",
+              "\n",
+              "     Match_Percent              Matched_Skills  \\\n",
+              "352           62.1  excel, pandas, python, sql   \n",
+              "257           57.1  numpy, pandas, python, sql   \n",
+              "280           57.1  numpy, pandas, python, sql   \n",
+              "457           57.1  numpy, pandas, python, sql   \n",
+              "298           57.1  numpy, pandas, python, sql   \n",
+              "73            57.1  numpy, pandas, python, sql   \n",
+              "461           57.1  numpy, pandas, python, sql   \n",
+              "26            57.1  numpy, pandas, python, sql   \n",
+              "413           57.1  excel, pandas, python, sql   \n",
+              "30            57.1  excel, pandas, python, sql   \n",
+              "\n",
+              "                                 Missing_Skills  Synthetic_Salary_LPA  \n",
+              "352    data visualization, power bi, statistics                  5.37  \n",
+              "257  machine learning, scikit-learn, statistics                 10.72  \n",
+              "280  machine learning, scikit-learn, statistics                  9.65  \n",
+              "457  machine learning, scikit-learn, statistics                  9.49  \n",
+              "298  machine learning, scikit-learn, statistics                  9.45  \n",
+              "73   machine learning, scikit-learn, statistics                  8.80  \n",
+              "461  machine learning, scikit-learn, statistics                  8.45  \n",
+              "26   machine learning, scikit-learn, statistics                  6.95  \n",
+              "413    data visualization, power bi, statistics                  6.03  \n",
+              "30     data visualization, power bi, statistics                  5.77  "
+            ],
+            "text/html": [
+              "\n",
+              "  <div id=\"df-ef7e61af-3c9c-4d9d-a721-874831e72c19\" class=\"colab-df-container\">\n",
+              "    <div>\n",
+              "<style scoped>\n",
+              "    .dataframe tbody tr th:only-of-type {\n",
+              "        vertical-align: middle;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe tbody tr th {\n",
+              "        vertical-align: top;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe thead th {\n",
+              "        text-align: right;\n",
+              "    }\n",
+              "</style>\n",
+              "<table border=\"1\" class=\"dataframe\">\n",
+              "  <thead>\n",
+              "    <tr style=\"text-align: right;\">\n",
+              "      <th></th>\n",
+              "      <th>Job_ID</th>\n",
+              "      <th>Title</th>\n",
+              "      <th>Company</th>\n",
+              "      <th>Location</th>\n",
+              "      <th>Experience_Required</th>\n",
+              "      <th>Match_Percent</th>\n",
+              "      <th>Matched_Skills</th>\n",
+              "      <th>Missing_Skills</th>\n",
+              "      <th>Synthetic_Salary_LPA</th>\n",
+              "    </tr>\n",
+              "  </thead>\n",
+              "  <tbody>\n",
+              "    <tr>\n",
+              "      <th>352</th>\n",
+              "      <td>JOB0353</td>\n",
+              "      <td>Data Analyst</td>\n",
+              "      <td>NovaWorks</td>\n",
+              "      <td>Remote</td>\n",
+              "      <td>2</td>\n",
+              "      <td>62.1</td>\n",
+              "      <td>excel, pandas, python, sql</td>\n",
+              "      <td>data visualization, power bi, statistics</td>\n",
+              "      <td>5.37</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>257</th>\n",
+              "      <td>JOB0258</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>BrightPath Tech</td>\n",
+              "      <td>Pune</td>\n",
+              "      <td>2</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>numpy, pandas, python, sql</td>\n",
+              "      <td>machine learning, scikit-learn, statistics</td>\n",
+              "      <td>10.72</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>280</th>\n",
+              "      <td>JOB0281</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>PixelRiver</td>\n",
+              "      <td>Pune</td>\n",
+              "      <td>2</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>numpy, pandas, python, sql</td>\n",
+              "      <td>machine learning, scikit-learn, statistics</td>\n",
+              "      <td>9.65</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>457</th>\n",
+              "      <td>JOB0458</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>Orbit Analytics</td>\n",
+              "      <td>Hyderabad</td>\n",
+              "      <td>2</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>numpy, pandas, python, sql</td>\n",
+              "      <td>machine learning, scikit-learn, statistics</td>\n",
+              "      <td>9.49</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>298</th>\n",
+              "      <td>JOB0299</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>PixelRiver</td>\n",
+              "      <td>Delhi NCR</td>\n",
+              "      <td>1</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>numpy, pandas, python, sql</td>\n",
+              "      <td>machine learning, scikit-learn, statistics</td>\n",
+              "      <td>9.45</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>73</th>\n",
+              "      <td>JOB0074</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>BrightPath Tech</td>\n",
+              "      <td>Bengaluru</td>\n",
+              "      <td>0</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>numpy, pandas, python, sql</td>\n",
+              "      <td>machine learning, scikit-learn, statistics</td>\n",
+              "      <td>8.80</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>461</th>\n",
+              "      <td>JOB0462</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>Cedar Labs</td>\n",
+              "      <td>Bengaluru</td>\n",
+              "      <td>1</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>numpy, pandas, python, sql</td>\n",
+              "      <td>machine learning, scikit-learn, statistics</td>\n",
+              "      <td>8.45</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>26</th>\n",
+              "      <td>JOB0027</td>\n",
+              "      <td>Data Scientist</td>\n",
+              "      <td>Cedar Labs</td>\n",
+              "      <td>Delhi NCR</td>\n",
+              "      <td>0</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>numpy, pandas, python, sql</td>\n",
+              "      <td>machine learning, scikit-learn, statistics</td>\n",
+              "      <td>6.95</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>413</th>\n",
+              "      <td>JOB0414</td>\n",
+              "      <td>Data Analyst</td>\n",
+              "      <td>NovaWorks</td>\n",
+              "      <td>Hyderabad</td>\n",
+              "      <td>2</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>excel, pandas, python, sql</td>\n",
+              "      <td>data visualization, power bi, statistics</td>\n",
+              "      <td>6.03</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>30</th>\n",
+              "      <td>JOB0031</td>\n",
+              "      <td>Data Analyst</td>\n",
+              "      <td>Orbit Analytics</td>\n",
+              "      <td>Delhi NCR</td>\n",
+              "      <td>1</td>\n",
+              "      <td>57.1</td>\n",
+              "      <td>excel, pandas, python, sql</td>\n",
+              "      <td>data visualization, power bi, statistics</td>\n",
+              "      <td>5.77</td>\n",
+              "    </tr>\n",
+              "  </tbody>\n",
+              "</table>\n",
+              "</div>\n",
+              "    <div class=\"colab-df-buttons\">\n",
+              "\n",
+              "  <div class=\"colab-df-container\">\n",
+              "    <button class=\"colab-df-convert\" onclick=\"convertToInteractive('df-ef7e61af-3c9c-4d9d-a721-874831e72c19')\"\n",
+              "            title=\"Convert this dataframe to an interactive table.\"\n",
+              "            style=\"display:none;\">\n",
+              "\n",
+              "  <svg xmlns=\"http://www.w3.org/2000/svg\" height=\"24px\" viewBox=\"0 -960 960 960\">\n",
+              "    <path d=\"M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z\"/>\n",
+              "  </svg>\n",
+              "    </button>\n",
+              "\n",
+              "  <style>\n",
+              "    .colab-df-container {\n",
+              "      display:flex;\n",
+              "      gap: 12px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert {\n",
+              "      background-color: #E8F0FE;\n",
+              "      border: none;\n",
+              "      border-radius: 50%;\n",
+              "      cursor: pointer;\n",
+              "      display: none;\n",
+              "      fill: #1967D2;\n",
+              "      height: 32px;\n",
+              "      padding: 0 0 0 0;\n",
+              "      width: 32px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert:hover {\n",
+              "      background-color: #E2EBFA;\n",
+              "      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);\n",
+              "      fill: #174EA6;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-buttons div {\n",
+              "      margin-bottom: 4px;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert {\n",
+              "      background-color: #3B4455;\n",
+              "      fill: #D2E3FC;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert:hover {\n",
+              "      background-color: #434B5C;\n",
+              "      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);\n",
+              "      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));\n",
+              "      fill: #FFFFFF;\n",
+              "    }\n",
+              "  </style>\n",
+              "\n",
+              "    <script>\n",
+              "      const buttonEl =\n",
+              "        document.querySelector('#df-ef7e61af-3c9c-4d9d-a721-874831e72c19 button.colab-df-convert');\n",
+              "      buttonEl.style.display =\n",
+              "        google.colab.kernel.accessAllowed ? 'block' : 'none';\n",
+              "\n",
+              "      async function convertToInteractive(key) {\n",
+              "        const element = document.querySelector('#df-ef7e61af-3c9c-4d9d-a721-874831e72c19');\n",
+              "        const dataTable =\n",
+              "          await google.colab.kernel.invokeFunction('convertToInteractive',\n",
+              "                                                    [key], {});\n",
+              "        if (!dataTable) return;\n",
+              "\n",
+              "        const docLinkHtml = 'Like what you see? Visit the ' +\n",
+              "          '<a target=\"_blank\" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'\n",
+              "          + ' to learn more about interactive tables.';\n",
+              "        element.innerHTML = '';\n",
+              "        dataTable['output_type'] = 'display_data';\n",
+              "        await google.colab.output.renderOutput(dataTable, element);\n",
+              "        const docLink = document.createElement('div');\n",
+              "        docLink.innerHTML = docLinkHtml;\n",
+              "        element.appendChild(docLink);\n",
+              "      }\n",
+              "    </script>\n",
+              "  </div>\n",
+              "\n",
+              "\n",
+              "  <div id=\"id_ba343bd9-decf-4e1d-b814-61c0c92f5f41\">\n",
+              "    <style>\n",
+              "      .colab-df-generate {\n",
+              "        background-color: #E8F0FE;\n",
+              "        border: none;\n",
+              "        border-radius: 50%;\n",
+              "        cursor: pointer;\n",
+              "        display: none;\n",
+              "        fill: #1967D2;\n",
+              "        height: 32px;\n",
+              "        padding: 0 0 0 0;\n",
+              "        width: 32px;\n",
+              "      }\n",
+              "\n",
+              "      .colab-df-generate:hover {\n",
+              "        background-color: #E2EBFA;\n",
+              "        box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);\n",
+              "        fill: #174EA6;\n",
+              "      }\n",
+              "\n",
+              "      [theme=dark] .colab-df-generate {\n",
+              "        background-color: #3B4455;\n",
+              "        fill: #D2E3FC;\n",
+              "      }\n",
+              "\n",
+              "      [theme=dark] .colab-df-generate:hover {\n",
+              "        background-color: #434B5C;\n",
+              "        box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);\n",
+              "        filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));\n",
+              "        fill: #FFFFFF;\n",
+              "      }\n",
+              "    </style>\n",
+              "    <button class=\"colab-df-generate\" onclick=\"generateWithVariable('job_recommendations')\"\n",
+              "            title=\"Generate code using this dataframe.\"\n",
+              "            style=\"display:none;\">\n",
+              "\n",
+              "  <svg xmlns=\"http://www.w3.org/2000/svg\" height=\"24px\"viewBox=\"0 0 24 24\"\n",
+              "       width=\"24px\">\n",
+              "    <path d=\"M7,19H8.4L18.45,9,17,7.55,7,17.6ZM5,21V16.75L18.45,3.32a2,2,0,0,1,2.83,0l1.4,1.43a1.91,1.91,0,0,1,.58,1.4,1.91,1.91,0,0,1-.58,1.4L9.25,21ZM18.45,9,17,7.55Zm-12,3A5.31,5.31,0,0,0,4.9,8.1,5.31,5.31,0,0,0,1,6.5,5.31,5.31,0,0,0,4.9,4.9,5.31,5.31,0,0,0,6.5,1,5.31,5.31,0,0,0,8.1,4.9,5.31,5.31,0,0,0,12,6.5,5.46,5.46,0,0,0,6.5,12Z\"/>\n",
+              "  </svg>\n",
+              "    </button>\n",
+              "    <script>\n",
+              "      (() => {\n",
+              "      const buttonEl =\n",
+              "        document.querySelector('#id_ba343bd9-decf-4e1d-b814-61c0c92f5f41 button.colab-df-generate');\n",
+              "      buttonEl.style.display =\n",
+              "        google.colab.kernel.accessAllowed ? 'block' : 'none';\n",
+              "\n",
+              "      buttonEl.onclick = () => {\n",
+              "        google.colab.notebook.generateWithVariable('job_recommendations');\n",
+              "      }\n",
+              "      })();\n",
+              "    </script>\n",
+              "  </div>\n",
+              "\n",
+              "    </div>\n",
+              "  </div>\n"
+            ],
+            "application/vnd.google.colaboratory.intrinsic+json": {
+              "type": "dataframe",
+              "variable_name": "job_recommendations",
+              "summary": "{\n  \"name\": \"job_recommendations\",\n  \"rows\": 10,\n  \"fields\": [\n    {\n      \"column\": \"Job_ID\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 10,\n        \"samples\": [\n          \"JOB0414\",\n          \"JOB0258\",\n          \"JOB0074\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Title\",\n      \"properties\": {\n        \"dtype\": \"category\",\n        \"num_unique_values\": 2,\n        \"samples\": [\n          \"Data Scientist\",\n          \"Data Analyst\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Company\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 5,\n        \"samples\": [\n          \"BrightPath Tech\",\n          \"Cedar Labs\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Location\",\n      \"properties\": {\n        \"dtype\": \"string\",\n        \"num_unique_values\": 5,\n        \"samples\": [\n          \"Pune\",\n          \"Bengaluru\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Experience_Required\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 0,\n        \"min\": 0,\n        \"max\": 2,\n        \"num_unique_values\": 3,\n        \"samples\": [\n          2,\n          1\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Match_Percent\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 1.5811388300841898,\n        \"min\": 57.1,\n        \"max\": 62.1,\n        \"num_unique_values\": 2,\n        \"samples\": [\n          57.1,\n          62.1\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Matched_Skills\",\n      \"properties\": {\n        \"dtype\": \"category\",\n        \"num_unique_values\": 2,\n        \"samples\": [\n          \"numpy, pandas, python, sql\",\n          \"excel, pandas, python, sql\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Missing_Skills\",\n      \"properties\": {\n        \"dtype\": \"category\",\n        \"num_unique_values\": 2,\n        \"samples\": [\n          \"machine learning, scikit-learn, statistics\",\n          \"data visualization, power bi, statistics\"\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"Synthetic_Salary_LPA\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 1.888943267191121,\n        \"min\": 5.37,\n        \"max\": 10.72,\n        \"num_unique_values\": 10,\n        \"samples\": [\n          6.03,\n          10.72\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
             }
-            String emotion = EMOTION_BY_WORD.get(word);
-            if (emotion != null) {
-                double old = totals.getOrDefault(emotion, 0.0);
-                totals.put(emotion, old + (negated ? -0.65 : 1.0) * modifier);
+          },
+          "metadata": {}
+        }
+      ],
+      "source": [
+        "def recommend_jobs(profile, top_n=10, location_preference=None):\n",
+        "    skills = set(normalize_skill_list(profile[\"skills\"]))\n",
+        "    rows = []\n",
+        "    for _, job in jobs_df.iterrows():\n",
+        "        required = set(job[\"required_skills\"])\n",
+        "        matched, missing = sorted(skills & required), sorted(required - skills)\n",
+        "        coverage = len(matched)/max(1,len(required))\n",
+        "        location_bonus = 0.05 if location_preference and job[\"location\"] == location_preference else 0\n",
+        "        rows.append({\n",
+        "            \"Job_ID\":job[\"job_id\"],\"Title\":job[\"title\"],\"Company\":job[\"company\"],\n",
+        "            \"Location\":job[\"location\"],\"Experience_Required\":job[\"experience_years\"],\n",
+        "            \"Match_Percent\":round(min(1,coverage+location_bonus)*100,1),\n",
+        "            \"Matched_Skills\":\", \".join(matched),\"Missing_Skills\":\", \".join(missing),\n",
+        "            \"Synthetic_Salary_LPA\":job[\"salary_lpa\"]\n",
+        "        })\n",
+        "    result = pd.DataFrame(rows)\n",
+        "    result = result[result[\"Experience_Required\"] <= profile.get(\"experience_years\",0)+2]\n",
+        "    return result.sort_values([\"Match_Percent\",\"Synthetic_Salary_LPA\"],ascending=False).head(top_n)\n",
+        "\n",
+        "job_recommendations = recommend_jobs(candidate,10,candidate[\"preferred_location\"])\n",
+        "display(job_recommendations)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "9a87c7c0",
+      "metadata": {
+        "id": "9a87c7c0"
+      },
+      "source": [
+        "## 10. Salary estimation — Random Forest regression baseline"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 11,
+      "id": "48e24e81",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "48e24e81",
+        "outputId": "98bd3268-b2b1-4fc4-b3c7-590f7b928dd5"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Synthetic salary model evaluation\n",
+            "MAE: 0.78 LPA\n",
+            "RMSE: 0.99 LPA\n",
+            "R2: 0.784\n"
+          ]
+        }
+      ],
+      "source": [
+        "# This model is trained only on synthetic vacancies.\n",
+        "salary_features = [\"title\",\"category\",\"location\",\"experience_years\"]\n",
+        "X = jobs_df[salary_features]\n",
+        "y = jobs_df[\"salary_lpa\"]\n",
+        "\n",
+        "preprocessor = ColumnTransformer([\n",
+        "    (\"categorical\",OneHotEncoder(handle_unknown=\"ignore\"),[\"title\",\"category\",\"location\"]),\n",
+        "    (\"numeric\",StandardScaler(),[\"experience_years\"])\n",
+        "])\n",
+        "salary_model = Pipeline([\n",
+        "    (\"preprocessor\",preprocessor),\n",
+        "    (\"regressor\",RandomForestRegressor(n_estimators=180,random_state=42,min_samples_leaf=2))\n",
+        "])\n",
+        "X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2,random_state=42)\n",
+        "salary_model.fit(X_train,y_train)\n",
+        "predictions = salary_model.predict(X_test)\n",
+        "\n",
+        "print(\"Synthetic salary model evaluation\")\n",
+        "print(\"MAE:\",round(mean_absolute_error(y_test,predictions),2),\"LPA\")\n",
+        "print(\"RMSE:\",round(np.sqrt(mean_squared_error(y_test,predictions)),2),\"LPA\")\n",
+        "print(\"R2:\",round(r2_score(y_test,predictions),3))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "d37895d0",
+      "metadata": {
+        "id": "d37895d0"
+      },
+      "source": [
+        "## 11. Estimate a salary for the recommended career"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 12,
+      "id": "82277da8",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "82277da8",
+        "outputId": "0db76804-a741-417c-9ad6-591e05e6acac"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Illustrative synthetic estimate for Data Analyst: 5.42 LPA\n",
+            "Not a real salary quote or guarantee.\n"
+          ]
+        }
+      ],
+      "source": [
+        "selected_role = next(r for r in CAREER_ROLES if r[\"role\"] == target_career)\n",
+        "salary_query = pd.DataFrame([{\n",
+        "    \"title\":target_career,\"category\":selected_role[\"category\"],\n",
+        "    \"location\":candidate[\"preferred_location\"],\n",
+        "    \"experience_years\":candidate[\"experience_years\"]\n",
+        "}])\n",
+        "salary_estimate = float(salary_model.predict(salary_query)[0])\n",
+        "print(f\"Illustrative synthetic estimate for {target_career}: {salary_estimate:.2f} LPA\")\n",
+        "print(\"Not a real salary quote or guarantee.\")"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "dd084666",
+      "metadata": {
+        "id": "dd084666"
+      },
+      "source": [
+        "## 12. Candidate segmentation using K-Means"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 13,
+      "id": "79f42e31",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 223
+        },
+        "id": "79f42e31",
+        "outputId": "b81e112c-adde-4955-e849-2194f33572b2"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Silhouette score: 0.28\n"
+          ]
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "         python   sql   web  analytics  ai_ml  security  experience_years\n",
+              "cluster                                                                  \n",
+              "0          0.85  0.21  0.14       0.42   0.21      0.19              3.41\n",
+              "1          0.68  0.16  0.20       0.30   0.20      0.32              1.86\n",
+              "2          0.76  0.20  0.15       0.39   0.23      0.27              5.45\n",
+              "3          0.87  0.26  0.32       0.40   0.26      0.02              0.43"
+            ],
+            "text/html": [
+              "\n",
+              "  <div id=\"df-a1817646-3ee6-48ab-b5dd-0580d930d89a\" class=\"colab-df-container\">\n",
+              "    <div>\n",
+              "<style scoped>\n",
+              "    .dataframe tbody tr th:only-of-type {\n",
+              "        vertical-align: middle;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe tbody tr th {\n",
+              "        vertical-align: top;\n",
+              "    }\n",
+              "\n",
+              "    .dataframe thead th {\n",
+              "        text-align: right;\n",
+              "    }\n",
+              "</style>\n",
+              "<table border=\"1\" class=\"dataframe\">\n",
+              "  <thead>\n",
+              "    <tr style=\"text-align: right;\">\n",
+              "      <th></th>\n",
+              "      <th>python</th>\n",
+              "      <th>sql</th>\n",
+              "      <th>web</th>\n",
+              "      <th>analytics</th>\n",
+              "      <th>ai_ml</th>\n",
+              "      <th>security</th>\n",
+              "      <th>experience_years</th>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>cluster</th>\n",
+              "      <th></th>\n",
+              "      <th></th>\n",
+              "      <th></th>\n",
+              "      <th></th>\n",
+              "      <th></th>\n",
+              "      <th></th>\n",
+              "      <th></th>\n",
+              "    </tr>\n",
+              "  </thead>\n",
+              "  <tbody>\n",
+              "    <tr>\n",
+              "      <th>0</th>\n",
+              "      <td>0.85</td>\n",
+              "      <td>0.21</td>\n",
+              "      <td>0.14</td>\n",
+              "      <td>0.42</td>\n",
+              "      <td>0.21</td>\n",
+              "      <td>0.19</td>\n",
+              "      <td>3.41</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>1</th>\n",
+              "      <td>0.68</td>\n",
+              "      <td>0.16</td>\n",
+              "      <td>0.20</td>\n",
+              "      <td>0.30</td>\n",
+              "      <td>0.20</td>\n",
+              "      <td>0.32</td>\n",
+              "      <td>1.86</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>2</th>\n",
+              "      <td>0.76</td>\n",
+              "      <td>0.20</td>\n",
+              "      <td>0.15</td>\n",
+              "      <td>0.39</td>\n",
+              "      <td>0.23</td>\n",
+              "      <td>0.27</td>\n",
+              "      <td>5.45</td>\n",
+              "    </tr>\n",
+              "    <tr>\n",
+              "      <th>3</th>\n",
+              "      <td>0.87</td>\n",
+              "      <td>0.26</td>\n",
+              "      <td>0.32</td>\n",
+              "      <td>0.40</td>\n",
+              "      <td>0.26</td>\n",
+              "      <td>0.02</td>\n",
+              "      <td>0.43</td>\n",
+              "    </tr>\n",
+              "  </tbody>\n",
+              "</table>\n",
+              "</div>\n",
+              "    <div class=\"colab-df-buttons\">\n",
+              "\n",
+              "  <div class=\"colab-df-container\">\n",
+              "    <button class=\"colab-df-convert\" onclick=\"convertToInteractive('df-a1817646-3ee6-48ab-b5dd-0580d930d89a')\"\n",
+              "            title=\"Convert this dataframe to an interactive table.\"\n",
+              "            style=\"display:none;\">\n",
+              "\n",
+              "  <svg xmlns=\"http://www.w3.org/2000/svg\" height=\"24px\" viewBox=\"0 -960 960 960\">\n",
+              "    <path d=\"M120-120v-720h720v720H120Zm60-500h600v-160H180v160Zm220 220h160v-160H400v160Zm0 220h160v-160H400v160ZM180-400h160v-160H180v160Zm440 0h160v-160H620v160ZM180-180h160v-160H180v160Zm440 0h160v-160H620v160Z\"/>\n",
+              "  </svg>\n",
+              "    </button>\n",
+              "\n",
+              "  <style>\n",
+              "    .colab-df-container {\n",
+              "      display:flex;\n",
+              "      gap: 12px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert {\n",
+              "      background-color: #E8F0FE;\n",
+              "      border: none;\n",
+              "      border-radius: 50%;\n",
+              "      cursor: pointer;\n",
+              "      display: none;\n",
+              "      fill: #1967D2;\n",
+              "      height: 32px;\n",
+              "      padding: 0 0 0 0;\n",
+              "      width: 32px;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-convert:hover {\n",
+              "      background-color: #E2EBFA;\n",
+              "      box-shadow: 0px 1px 2px rgba(60, 64, 67, 0.3), 0px 1px 3px 1px rgba(60, 64, 67, 0.15);\n",
+              "      fill: #174EA6;\n",
+              "    }\n",
+              "\n",
+              "    .colab-df-buttons div {\n",
+              "      margin-bottom: 4px;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert {\n",
+              "      background-color: #3B4455;\n",
+              "      fill: #D2E3FC;\n",
+              "    }\n",
+              "\n",
+              "    [theme=dark] .colab-df-convert:hover {\n",
+              "      background-color: #434B5C;\n",
+              "      box-shadow: 0px 1px 3px 1px rgba(0, 0, 0, 0.15);\n",
+              "      filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3));\n",
+              "      fill: #FFFFFF;\n",
+              "    }\n",
+              "  </style>\n",
+              "\n",
+              "    <script>\n",
+              "      const buttonEl =\n",
+              "        document.querySelector('#df-a1817646-3ee6-48ab-b5dd-0580d930d89a button.colab-df-convert');\n",
+              "      buttonEl.style.display =\n",
+              "        google.colab.kernel.accessAllowed ? 'block' : 'none';\n",
+              "\n",
+              "      async function convertToInteractive(key) {\n",
+              "        const element = document.querySelector('#df-a1817646-3ee6-48ab-b5dd-0580d930d89a');\n",
+              "        const dataTable =\n",
+              "          await google.colab.kernel.invokeFunction('convertToInteractive',\n",
+              "                                                    [key], {});\n",
+              "        if (!dataTable) return;\n",
+              "\n",
+              "        const docLinkHtml = 'Like what you see? Visit the ' +\n",
+              "          '<a target=\"_blank\" href=https://colab.research.google.com/notebooks/data_table.ipynb>data table notebook</a>'\n",
+              "          + ' to learn more about interactive tables.';\n",
+              "        element.innerHTML = '';\n",
+              "        dataTable['output_type'] = 'display_data';\n",
+              "        await google.colab.output.renderOutput(dataTable, element);\n",
+              "        const docLink = document.createElement('div');\n",
+              "        docLink.innerHTML = docLinkHtml;\n",
+              "        element.appendChild(docLink);\n",
+              "      }\n",
+              "    </script>\n",
+              "  </div>\n",
+              "\n",
+              "\n",
+              "    </div>\n",
+              "  </div>\n"
+            ],
+            "application/vnd.google.colaboratory.intrinsic+json": {
+              "type": "dataframe",
+              "summary": "{\n  \"name\": \"display(segments\",\n  \"rows\": 4,\n  \"fields\": [\n    {\n      \"column\": \"cluster\",\n      \"properties\": {\n        \"dtype\": \"int32\",\n        \"num_unique_values\": 4,\n        \"samples\": [\n          1,\n          3,\n          0\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"python\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 0.08755950357709129,\n        \"min\": 0.68,\n        \"max\": 0.87,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          0.68,\n          0.87,\n          0.85\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"sql\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 0.041129875597510225,\n        \"min\": 0.16,\n        \"max\": 0.26,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          0.16,\n          0.26,\n          0.21\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"web\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 0.08261355820929153,\n        \"min\": 0.14,\n        \"max\": 0.32,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          0.2,\n          0.32,\n          0.14\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"analytics\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 0.053150729063673255,\n        \"min\": 0.3,\n        \"max\": 0.42,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          0.3,\n          0.4,\n          0.42\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"ai_ml\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 0.026457513110645908,\n        \"min\": 0.2,\n        \"max\": 0.26,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          0.2,\n          0.26,\n          0.21\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"security\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 0.13140268896284685,\n        \"min\": 0.02,\n        \"max\": 0.32,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          0.32,\n          0.02,\n          0.19\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    },\n    {\n      \"column\": \"experience_years\",\n      \"properties\": {\n        \"dtype\": \"number\",\n        \"std\": 2.1520900693666767,\n        \"min\": 0.43,\n        \"max\": 5.45,\n        \"num_unique_values\": 4,\n        \"samples\": [\n          1.86,\n          0.43,\n          3.41\n        ],\n        \"semantic_type\": \"\",\n        \"description\": \"\"\n      }\n    }\n  ]\n}"
             }
-            if (negationWindow > 0) negationWindow--;
-            modifier = 1.0;
+          },
+          "metadata": {}
         }
-
-        // Handle a few common phrases that are not captured well by single-word matching.
-        String normalized = text.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}' ]", " ").replaceAll("\\s+", " ").trim();
-        if (normalized.contains("thank you")) { totals.merge("Gratitude", 2.0, Double::sum); score += 2.0; }
-        if (normalized.contains("looking forward")) { totals.merge("Hope", 1.0, Double::sum); score += 1.0; }
-        if (normalized.contains("on cloud nine")) { totals.merge("Happiness", 2.0, Double::sum); score += 3.0; }
-
-        // Scale the score and clamp it to the range -100 through +100.
-        r.score = Math.max(-100, Math.min(100, score * 4.0));
-        r.sentiment = r.score > 2 ? "Positive" : r.score < -2 ? "Negative" : "Neutral";
-        r.emotions = totals.entrySet().stream()
-                .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
-        r.primaryEmotion = "Undetected";
-        for (Map.Entry<String, Double> e : r.emotions.entrySet()) {
-            if (e.getValue() > 0) { r.primaryEmotion = e.getKey(); break; }
+      ],
+      "source": [
+        "rng = np.random.default_rng(42)\n",
+        "groups = {\n",
+        "    \"data\":[\"python\",\"sql\",\"excel\",\"pandas\",\"statistics\",\"power bi\"],\n",
+        "    \"software\":[\"python\",\"javascript\",\"html\",\"css\",\"react\",\"git\"],\n",
+        "    \"ai\":[\"python\",\"machine learning\",\"pytorch\",\"generative ai\",\"numpy\",\"statistics\"],\n",
+        "    \"security\":[\"linux\",\"networking\",\"cybersecurity\",\"python\",\"ethical hacking\",\"git\"]\n",
+        "}\n",
+        "segment_rows = []\n",
+        "for i in range(240):\n",
+        "    group = groups[list(groups)[i%len(groups)]]\n",
+        "    segment_rows.append({\n",
+        "        \"candidate_id\":f\"C{i+1:03d}\",\n",
+        "        \"python\":int(\"python\" in group and rng.random()<0.8),\n",
+        "        \"sql\":int(\"sql\" in group and rng.random()<0.8),\n",
+        "        \"web\":int(any(s in group for s in [\"javascript\",\"html\",\"css\",\"react\"]) and rng.random()<0.8),\n",
+        "        \"analytics\":int(any(s in group for s in [\"excel\",\"pandas\",\"statistics\",\"power bi\"]) and rng.random()<0.8),\n",
+        "        \"ai_ml\":int(any(s in group for s in [\"machine learning\",\"pytorch\",\"generative ai\"]) and rng.random()<0.8),\n",
+        "        \"security\":int(any(s in group for s in [\"linux\",\"networking\",\"cybersecurity\",\"ethical hacking\"]) and rng.random()<0.8),\n",
+        "        \"experience_years\":int(rng.integers(0,7))\n",
+        "    })\n",
+        "\n",
+        "segments = pd.DataFrame(segment_rows)\n",
+        "features = segments.drop(columns=\"candidate_id\")\n",
+        "kmeans = KMeans(n_clusters=4,random_state=42,n_init=10)\n",
+        "segments[\"cluster\"] = kmeans.fit_predict(features)\n",
+        "print(\"Silhouette score:\",round(silhouette_score(features,segments[\"cluster\"]),3))\n",
+        "display(segments.groupby(\"cluster\").mean(numeric_only=True).round(2))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "20d1cda1",
+      "metadata": {
+        "id": "20d1cda1"
+      },
+      "source": [
+        "## 13. Visual analytics dashboard"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 14,
+      "id": "b8565378",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 1000
+        },
+        "id": "b8565378",
+        "outputId": "32d8cb3e-9b65-4b0c-dfe7-df97e5d88d6a"
+      },
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<html>\n",
+              "<head><meta charset=\"utf-8\" /></head>\n",
+              "<body>\n",
+              "    <div>            <script src=\"https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-AMS-MML_SVG\"></script><script type=\"text/javascript\">if (window.MathJax && window.MathJax.Hub && window.MathJax.Hub.Config) {window.MathJax.Hub.Config({SVG: {font: \"STIX-Web\"}});}</script>                <script type=\"text/javascript\">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>\n",
+              "        <script charset=\"utf-8\" src=\"https://cdn.plot.ly/plotly-2.35.2.min.js\"></script>                <div id=\"fef5cdda-2188-4778-b732-4e4d46eba380\" class=\"plotly-graph-div\" style=\"height:525px; width:100%;\"></div>            <script type=\"text/javascript\">                                    window.PLOTLYENV=window.PLOTLYENV || {};                                    if (document.getElementById(\"fef5cdda-2188-4778-b732-4e4d46eba380\")) {                    Plotly.newPlot(                        \"fef5cdda-2188-4778-b732-4e4d46eba380\",                        [{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Category=Design\\u003cbr\\u003eMatch score (%)=%{x}\\u003cbr\\u003eCareer=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Design\",\"marker\":{\"color\":\"#636efa\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Design\",\"offsetgroup\":\"Design\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[40.0],\"xaxis\":\"x\",\"y\":[\"UI\\u002fUX Designer\"],\"yaxis\":\"y\",\"type\":\"bar\"},{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Category=Software\\u003cbr\\u003eMatch score (%)=%{x}\\u003cbr\\u003eCareer=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Software\",\"marker\":{\"color\":\"#EF553B\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Software\",\"offsetgroup\":\"Software\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[40.0,41.0,42.2,47.6],\"xaxis\":\"x\",\"y\":[\"QA Automation Engineer\",\"Frontend Developer\",\"Full Stack Developer\",\"Python Developer\"],\"yaxis\":\"y\",\"type\":\"bar\"},{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Category=Business\\u003cbr\\u003eMatch score (%)=%{x}\\u003cbr\\u003eCareer=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Business\",\"marker\":{\"color\":\"#00cc96\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Business\",\"offsetgroup\":\"Business\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[46.7],\"xaxis\":\"x\",\"y\":[\"Product Analyst\"],\"yaxis\":\"y\",\"type\":\"bar\"},{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Category=Data\\u003cbr\\u003eMatch score (%)=%{x}\\u003cbr\\u003eCareer=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Data\",\"marker\":{\"color\":\"#ab63fa\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Data\",\"offsetgroup\":\"Data\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[52.4,52.4],\"xaxis\":\"x\",\"y\":[\"Data Analyst\",\"Data Scientist\"],\"yaxis\":\"y\",\"type\":\"bar\"}],                        {\"template\":{\"data\":{\"histogram2dcontour\":[{\"type\":\"histogram2dcontour\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"choropleth\":[{\"type\":\"choropleth\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"histogram2d\":[{\"type\":\"histogram2d\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"heatmap\":[{\"type\":\"heatmap\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"heatmapgl\":[{\"type\":\"heatmapgl\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"contourcarpet\":[{\"type\":\"contourcarpet\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"contour\":[{\"type\":\"contour\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"surface\":[{\"type\":\"surface\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"mesh3d\":[{\"type\":\"mesh3d\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"scatter\":[{\"fillpattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2},\"type\":\"scatter\"}],\"parcoords\":[{\"type\":\"parcoords\",\"line\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterpolargl\":[{\"type\":\"scatterpolargl\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"bar\":[{\"error_x\":{\"color\":\"#2a3f5f\"},\"error_y\":{\"color\":\"#2a3f5f\"},\"marker\":{\"line\":{\"color\":\"#E5ECF6\",\"width\":0.5},\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"bar\"}],\"scattergeo\":[{\"type\":\"scattergeo\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterpolar\":[{\"type\":\"scatterpolar\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"histogram\":[{\"marker\":{\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"histogram\"}],\"scattergl\":[{\"type\":\"scattergl\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatter3d\":[{\"type\":\"scatter3d\",\"line\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}},\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scattermapbox\":[{\"type\":\"scattermapbox\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterternary\":[{\"type\":\"scatterternary\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scattercarpet\":[{\"type\":\"scattercarpet\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"carpet\":[{\"aaxis\":{\"endlinecolor\":\"#2a3f5f\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"minorgridcolor\":\"white\",\"startlinecolor\":\"#2a3f5f\"},\"baxis\":{\"endlinecolor\":\"#2a3f5f\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"minorgridcolor\":\"white\",\"startlinecolor\":\"#2a3f5f\"},\"type\":\"carpet\"}],\"table\":[{\"cells\":{\"fill\":{\"color\":\"#EBF0F8\"},\"line\":{\"color\":\"white\"}},\"header\":{\"fill\":{\"color\":\"#C8D4E3\"},\"line\":{\"color\":\"white\"}},\"type\":\"table\"}],\"barpolar\":[{\"marker\":{\"line\":{\"color\":\"#E5ECF6\",\"width\":0.5},\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"barpolar\"}],\"pie\":[{\"automargin\":true,\"type\":\"pie\"}]},\"layout\":{\"autotypenumbers\":\"strict\",\"colorway\":[\"#636efa\",\"#EF553B\",\"#00cc96\",\"#ab63fa\",\"#FFA15A\",\"#19d3f3\",\"#FF6692\",\"#B6E880\",\"#FF97FF\",\"#FECB52\"],\"font\":{\"color\":\"#2a3f5f\"},\"hovermode\":\"closest\",\"hoverlabel\":{\"align\":\"left\"},\"paper_bgcolor\":\"white\",\"plot_bgcolor\":\"#E5ECF6\",\"polar\":{\"bgcolor\":\"#E5ECF6\",\"angularaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"radialaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"}},\"ternary\":{\"bgcolor\":\"#E5ECF6\",\"aaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"baxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"caxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"}},\"coloraxis\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}},\"colorscale\":{\"sequential\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]],\"sequentialminus\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]],\"diverging\":[[0,\"#8e0152\"],[0.1,\"#c51b7d\"],[0.2,\"#de77ae\"],[0.3,\"#f1b6da\"],[0.4,\"#fde0ef\"],[0.5,\"#f7f7f7\"],[0.6,\"#e6f5d0\"],[0.7,\"#b8e186\"],[0.8,\"#7fbc41\"],[0.9,\"#4d9221\"],[1,\"#276419\"]]},\"xaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\",\"title\":{\"standoff\":15},\"zerolinecolor\":\"white\",\"automargin\":true,\"zerolinewidth\":2},\"yaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\",\"title\":{\"standoff\":15},\"zerolinecolor\":\"white\",\"automargin\":true,\"zerolinewidth\":2},\"scene\":{\"xaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2},\"yaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2},\"zaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2}},\"shapedefaults\":{\"line\":{\"color\":\"#2a3f5f\"}},\"annotationdefaults\":{\"arrowcolor\":\"#2a3f5f\",\"arrowhead\":0,\"arrowwidth\":1},\"geo\":{\"bgcolor\":\"white\",\"landcolor\":\"#E5ECF6\",\"subunitcolor\":\"white\",\"showland\":true,\"showlakes\":true,\"lakecolor\":\"white\"},\"title\":{\"x\":0.05},\"mapbox\":{\"style\":\"light\"}}},\"xaxis\":{\"anchor\":\"y\",\"domain\":[0.0,1.0],\"title\":{\"text\":\"Match score (%)\"}},\"yaxis\":{\"anchor\":\"x\",\"domain\":[0.0,1.0],\"title\":{\"text\":\"Career\"}},\"legend\":{\"title\":{\"text\":\"Category\"},\"tracegroupgap\":0},\"title\":{\"text\":\"Top Career Recommendations\"},\"barmode\":\"relative\"},                        {\"responsive\": true}                    ).then(function(){\n",
+              "                            \n",
+              "var gd = document.getElementById('fef5cdda-2188-4778-b732-4e4d46eba380');\n",
+              "var x = new MutationObserver(function (mutations, observer) {{\n",
+              "        var display = window.getComputedStyle(gd).display;\n",
+              "        if (!display || display === 'none') {{\n",
+              "            console.log([gd, 'removed!']);\n",
+              "            Plotly.purge(gd);\n",
+              "            observer.disconnect();\n",
+              "        }}\n",
+              "}});\n",
+              "\n",
+              "// Listen for the removal of the full notebook cells\n",
+              "var notebookContainer = gd.closest('#notebook-container');\n",
+              "if (notebookContainer) {{\n",
+              "    x.observe(notebookContainer, {childList: true});\n",
+              "}}\n",
+              "\n",
+              "// Listen for the clearing of the current output cell\n",
+              "var outputEl = gd.closest('.output');\n",
+              "if (outputEl) {{\n",
+              "    x.observe(outputEl, {childList: true});\n",
+              "}}\n",
+              "\n",
+              "                        })                };                            </script>        </div>\n",
+              "</body>\n",
+              "</html>"
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<html>\n",
+              "<head><meta charset=\"utf-8\" /></head>\n",
+              "<body>\n",
+              "    <div>            <script src=\"https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-AMS-MML_SVG\"></script><script type=\"text/javascript\">if (window.MathJax && window.MathJax.Hub && window.MathJax.Hub.Config) {window.MathJax.Hub.Config({SVG: {font: \"STIX-Web\"}});}</script>                <script type=\"text/javascript\">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>\n",
+              "        <script charset=\"utf-8\" src=\"https://cdn.plot.ly/plotly-2.35.2.min.js\"></script>                <div id=\"962c8785-8db5-4679-9b8f-f38c19d4110f\" class=\"plotly-graph-div\" style=\"height:525px; width:100%;\"></div>            <script type=\"text/javascript\">                                    window.PLOTLYENV=window.PLOTLYENV || {};                                    if (document.getElementById(\"962c8785-8db5-4679-9b8f-f38c19d4110f\")) {                    Plotly.newPlot(                        \"962c8785-8db5-4679-9b8f-f38c19d4110f\",                        [{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Location=Pune\\u003cbr\\u003eMatch_Percent=%{x}\\u003cbr\\u003eTitle=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Pune\",\"marker\":{\"color\":\"#636efa\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Pune\",\"offsetgroup\":\"Pune\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[57.1,57.1],\"xaxis\":\"x\",\"y\":[\"Data Scientist\",\"Data Scientist\"],\"yaxis\":\"y\",\"type\":\"bar\"},{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Location=Hyderabad\\u003cbr\\u003eMatch_Percent=%{x}\\u003cbr\\u003eTitle=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Hyderabad\",\"marker\":{\"color\":\"#EF553B\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Hyderabad\",\"offsetgroup\":\"Hyderabad\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[57.1,57.1],\"xaxis\":\"x\",\"y\":[\"Data Scientist\",\"Data Analyst\"],\"yaxis\":\"y\",\"type\":\"bar\"},{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Location=Delhi NCR\\u003cbr\\u003eMatch_Percent=%{x}\\u003cbr\\u003eTitle=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Delhi NCR\",\"marker\":{\"color\":\"#00cc96\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Delhi NCR\",\"offsetgroup\":\"Delhi NCR\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[57.1,57.1,57.1],\"xaxis\":\"x\",\"y\":[\"Data Scientist\",\"Data Scientist\",\"Data Analyst\"],\"yaxis\":\"y\",\"type\":\"bar\"},{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Location=Bengaluru\\u003cbr\\u003eMatch_Percent=%{x}\\u003cbr\\u003eTitle=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Bengaluru\",\"marker\":{\"color\":\"#ab63fa\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Bengaluru\",\"offsetgroup\":\"Bengaluru\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[57.1,57.1],\"xaxis\":\"x\",\"y\":[\"Data Scientist\",\"Data Scientist\"],\"yaxis\":\"y\",\"type\":\"bar\"},{\"alignmentgroup\":\"True\",\"hovertemplate\":\"Location=Remote\\u003cbr\\u003eMatch_Percent=%{x}\\u003cbr\\u003eTitle=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Remote\",\"marker\":{\"color\":\"#FFA15A\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Remote\",\"offsetgroup\":\"Remote\",\"orientation\":\"h\",\"showlegend\":true,\"textposition\":\"auto\",\"x\":[62.1],\"xaxis\":\"x\",\"y\":[\"Data Analyst\"],\"yaxis\":\"y\",\"type\":\"bar\"}],                        {\"template\":{\"data\":{\"histogram2dcontour\":[{\"type\":\"histogram2dcontour\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"choropleth\":[{\"type\":\"choropleth\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"histogram2d\":[{\"type\":\"histogram2d\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"heatmap\":[{\"type\":\"heatmap\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"heatmapgl\":[{\"type\":\"heatmapgl\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"contourcarpet\":[{\"type\":\"contourcarpet\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"contour\":[{\"type\":\"contour\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"surface\":[{\"type\":\"surface\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"mesh3d\":[{\"type\":\"mesh3d\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"scatter\":[{\"fillpattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2},\"type\":\"scatter\"}],\"parcoords\":[{\"type\":\"parcoords\",\"line\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterpolargl\":[{\"type\":\"scatterpolargl\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"bar\":[{\"error_x\":{\"color\":\"#2a3f5f\"},\"error_y\":{\"color\":\"#2a3f5f\"},\"marker\":{\"line\":{\"color\":\"#E5ECF6\",\"width\":0.5},\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"bar\"}],\"scattergeo\":[{\"type\":\"scattergeo\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterpolar\":[{\"type\":\"scatterpolar\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"histogram\":[{\"marker\":{\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"histogram\"}],\"scattergl\":[{\"type\":\"scattergl\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatter3d\":[{\"type\":\"scatter3d\",\"line\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}},\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scattermapbox\":[{\"type\":\"scattermapbox\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterternary\":[{\"type\":\"scatterternary\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scattercarpet\":[{\"type\":\"scattercarpet\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"carpet\":[{\"aaxis\":{\"endlinecolor\":\"#2a3f5f\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"minorgridcolor\":\"white\",\"startlinecolor\":\"#2a3f5f\"},\"baxis\":{\"endlinecolor\":\"#2a3f5f\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"minorgridcolor\":\"white\",\"startlinecolor\":\"#2a3f5f\"},\"type\":\"carpet\"}],\"table\":[{\"cells\":{\"fill\":{\"color\":\"#EBF0F8\"},\"line\":{\"color\":\"white\"}},\"header\":{\"fill\":{\"color\":\"#C8D4E3\"},\"line\":{\"color\":\"white\"}},\"type\":\"table\"}],\"barpolar\":[{\"marker\":{\"line\":{\"color\":\"#E5ECF6\",\"width\":0.5},\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"barpolar\"}],\"pie\":[{\"automargin\":true,\"type\":\"pie\"}]},\"layout\":{\"autotypenumbers\":\"strict\",\"colorway\":[\"#636efa\",\"#EF553B\",\"#00cc96\",\"#ab63fa\",\"#FFA15A\",\"#19d3f3\",\"#FF6692\",\"#B6E880\",\"#FF97FF\",\"#FECB52\"],\"font\":{\"color\":\"#2a3f5f\"},\"hovermode\":\"closest\",\"hoverlabel\":{\"align\":\"left\"},\"paper_bgcolor\":\"white\",\"plot_bgcolor\":\"#E5ECF6\",\"polar\":{\"bgcolor\":\"#E5ECF6\",\"angularaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"radialaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"}},\"ternary\":{\"bgcolor\":\"#E5ECF6\",\"aaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"baxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"caxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"}},\"coloraxis\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}},\"colorscale\":{\"sequential\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]],\"sequentialminus\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]],\"diverging\":[[0,\"#8e0152\"],[0.1,\"#c51b7d\"],[0.2,\"#de77ae\"],[0.3,\"#f1b6da\"],[0.4,\"#fde0ef\"],[0.5,\"#f7f7f7\"],[0.6,\"#e6f5d0\"],[0.7,\"#b8e186\"],[0.8,\"#7fbc41\"],[0.9,\"#4d9221\"],[1,\"#276419\"]]},\"xaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\",\"title\":{\"standoff\":15},\"zerolinecolor\":\"white\",\"automargin\":true,\"zerolinewidth\":2},\"yaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\",\"title\":{\"standoff\":15},\"zerolinecolor\":\"white\",\"automargin\":true,\"zerolinewidth\":2},\"scene\":{\"xaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2},\"yaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2},\"zaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2}},\"shapedefaults\":{\"line\":{\"color\":\"#2a3f5f\"}},\"annotationdefaults\":{\"arrowcolor\":\"#2a3f5f\",\"arrowhead\":0,\"arrowwidth\":1},\"geo\":{\"bgcolor\":\"white\",\"landcolor\":\"#E5ECF6\",\"subunitcolor\":\"white\",\"showland\":true,\"showlakes\":true,\"lakecolor\":\"white\"},\"title\":{\"x\":0.05},\"mapbox\":{\"style\":\"light\"}}},\"xaxis\":{\"anchor\":\"y\",\"domain\":[0.0,1.0],\"title\":{\"text\":\"Match_Percent\"}},\"yaxis\":{\"anchor\":\"x\",\"domain\":[0.0,1.0],\"title\":{\"text\":\"Title\"}},\"legend\":{\"title\":{\"text\":\"Location\"},\"tracegroupgap\":0},\"title\":{\"text\":\"Recommended Job Matches\"},\"barmode\":\"relative\"},                        {\"responsive\": true}                    ).then(function(){\n",
+              "                            \n",
+              "var gd = document.getElementById('962c8785-8db5-4679-9b8f-f38c19d4110f');\n",
+              "var x = new MutationObserver(function (mutations, observer) {{\n",
+              "        var display = window.getComputedStyle(gd).display;\n",
+              "        if (!display || display === 'none') {{\n",
+              "            console.log([gd, 'removed!']);\n",
+              "            Plotly.purge(gd);\n",
+              "            observer.disconnect();\n",
+              "        }}\n",
+              "}});\n",
+              "\n",
+              "// Listen for the removal of the full notebook cells\n",
+              "var notebookContainer = gd.closest('#notebook-container');\n",
+              "if (notebookContainer) {{\n",
+              "    x.observe(notebookContainer, {childList: true});\n",
+              "}}\n",
+              "\n",
+              "// Listen for the clearing of the current output cell\n",
+              "var outputEl = gd.closest('.output');\n",
+              "if (outputEl) {{\n",
+              "    x.observe(outputEl, {childList: true});\n",
+              "}}\n",
+              "\n",
+              "                        })                };                            </script>        </div>\n",
+              "</body>\n",
+              "</html>"
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<html>\n",
+              "<head><meta charset=\"utf-8\" /></head>\n",
+              "<body>\n",
+              "    <div>            <script src=\"https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-AMS-MML_SVG\"></script><script type=\"text/javascript\">if (window.MathJax && window.MathJax.Hub && window.MathJax.Hub.Config) {window.MathJax.Hub.Config({SVG: {font: \"STIX-Web\"}});}</script>                <script type=\"text/javascript\">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>\n",
+              "        <script charset=\"utf-8\" src=\"https://cdn.plot.ly/plotly-2.35.2.min.js\"></script>                <div id=\"32251beb-7147-4a53-ad84-279b641706c6\" class=\"plotly-graph-div\" style=\"height:525px; width:100%;\"></div>            <script type=\"text/javascript\">                                    window.PLOTLYENV=window.PLOTLYENV || {};                                    if (document.getElementById(\"32251beb-7147-4a53-ad84-279b641706c6\")) {                    Plotly.newPlot(                        \"32251beb-7147-4a53-ad84-279b641706c6\",                        [{\"alignmentgroup\":\"True\",\"bingroup\":\"x\",\"hovertemplate\":\"category=%{x}\\u003cbr\\u003ecount=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Data\",\"marker\":{\"color\":\"#636efa\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Data\",\"offsetgroup\":\"Data\",\"orientation\":\"v\",\"showlegend\":true,\"x\":[\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\",\"Data\"],\"xaxis\":\"x\",\"yaxis\":\"y\",\"type\":\"histogram\"},{\"alignmentgroup\":\"True\",\"bingroup\":\"x\",\"hovertemplate\":\"category=%{x}\\u003cbr\\u003ecount=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"AI\",\"marker\":{\"color\":\"#EF553B\",\"pattern\":{\"shape\":\"\"}},\"name\":\"AI\",\"offsetgroup\":\"AI\",\"orientation\":\"v\",\"showlegend\":true,\"x\":[\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\",\"AI\"],\"xaxis\":\"x\",\"yaxis\":\"y\",\"type\":\"histogram\"},{\"alignmentgroup\":\"True\",\"bingroup\":\"x\",\"hovertemplate\":\"category=%{x}\\u003cbr\\u003ecount=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Software\",\"marker\":{\"color\":\"#00cc96\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Software\",\"offsetgroup\":\"Software\",\"orientation\":\"v\",\"showlegend\":true,\"x\":[\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\",\"Software\"],\"xaxis\":\"x\",\"yaxis\":\"y\",\"type\":\"histogram\"},{\"alignmentgroup\":\"True\",\"bingroup\":\"x\",\"hovertemplate\":\"category=%{x}\\u003cbr\\u003ecount=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Business\",\"marker\":{\"color\":\"#ab63fa\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Business\",\"offsetgroup\":\"Business\",\"orientation\":\"v\",\"showlegend\":true,\"x\":[\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\",\"Business\"],\"xaxis\":\"x\",\"yaxis\":\"y\",\"type\":\"histogram\"},{\"alignmentgroup\":\"True\",\"bingroup\":\"x\",\"hovertemplate\":\"category=%{x}\\u003cbr\\u003ecount=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Cloud\",\"marker\":{\"color\":\"#FFA15A\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Cloud\",\"offsetgroup\":\"Cloud\",\"orientation\":\"v\",\"showlegend\":true,\"x\":[\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\",\"Cloud\"],\"xaxis\":\"x\",\"yaxis\":\"y\",\"type\":\"histogram\"},{\"alignmentgroup\":\"True\",\"bingroup\":\"x\",\"hovertemplate\":\"category=%{x}\\u003cbr\\u003ecount=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Design\",\"marker\":{\"color\":\"#19d3f3\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Design\",\"offsetgroup\":\"Design\",\"orientation\":\"v\",\"showlegend\":true,\"x\":[\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\",\"Design\"],\"xaxis\":\"x\",\"yaxis\":\"y\",\"type\":\"histogram\"},{\"alignmentgroup\":\"True\",\"bingroup\":\"x\",\"hovertemplate\":\"category=%{x}\\u003cbr\\u003ecount=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"IT Operations\",\"marker\":{\"color\":\"#FF6692\",\"pattern\":{\"shape\":\"\"}},\"name\":\"IT Operations\",\"offsetgroup\":\"IT Operations\",\"orientation\":\"v\",\"showlegend\":true,\"x\":[\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\",\"IT Operations\"],\"xaxis\":\"x\",\"yaxis\":\"y\",\"type\":\"histogram\"},{\"alignmentgroup\":\"True\",\"bingroup\":\"x\",\"hovertemplate\":\"category=%{x}\\u003cbr\\u003ecount=%{y}\\u003cextra\\u003e\\u003c\\u002fextra\\u003e\",\"legendgroup\":\"Security\",\"marker\":{\"color\":\"#B6E880\",\"pattern\":{\"shape\":\"\"}},\"name\":\"Security\",\"offsetgroup\":\"Security\",\"orientation\":\"v\",\"showlegend\":true,\"x\":[\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\",\"Security\"],\"xaxis\":\"x\",\"yaxis\":\"y\",\"type\":\"histogram\"}],                        {\"template\":{\"data\":{\"histogram2dcontour\":[{\"type\":\"histogram2dcontour\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"choropleth\":[{\"type\":\"choropleth\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"histogram2d\":[{\"type\":\"histogram2d\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"heatmap\":[{\"type\":\"heatmap\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"heatmapgl\":[{\"type\":\"heatmapgl\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"contourcarpet\":[{\"type\":\"contourcarpet\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"contour\":[{\"type\":\"contour\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"surface\":[{\"type\":\"surface\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"},\"colorscale\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]]}],\"mesh3d\":[{\"type\":\"mesh3d\",\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}],\"scatter\":[{\"fillpattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2},\"type\":\"scatter\"}],\"parcoords\":[{\"type\":\"parcoords\",\"line\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterpolargl\":[{\"type\":\"scatterpolargl\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"bar\":[{\"error_x\":{\"color\":\"#2a3f5f\"},\"error_y\":{\"color\":\"#2a3f5f\"},\"marker\":{\"line\":{\"color\":\"#E5ECF6\",\"width\":0.5},\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"bar\"}],\"scattergeo\":[{\"type\":\"scattergeo\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterpolar\":[{\"type\":\"scatterpolar\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"histogram\":[{\"marker\":{\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"histogram\"}],\"scattergl\":[{\"type\":\"scattergl\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatter3d\":[{\"type\":\"scatter3d\",\"line\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}},\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scattermapbox\":[{\"type\":\"scattermapbox\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scatterternary\":[{\"type\":\"scatterternary\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"scattercarpet\":[{\"type\":\"scattercarpet\",\"marker\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}}}],\"carpet\":[{\"aaxis\":{\"endlinecolor\":\"#2a3f5f\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"minorgridcolor\":\"white\",\"startlinecolor\":\"#2a3f5f\"},\"baxis\":{\"endlinecolor\":\"#2a3f5f\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"minorgridcolor\":\"white\",\"startlinecolor\":\"#2a3f5f\"},\"type\":\"carpet\"}],\"table\":[{\"cells\":{\"fill\":{\"color\":\"#EBF0F8\"},\"line\":{\"color\":\"white\"}},\"header\":{\"fill\":{\"color\":\"#C8D4E3\"},\"line\":{\"color\":\"white\"}},\"type\":\"table\"}],\"barpolar\":[{\"marker\":{\"line\":{\"color\":\"#E5ECF6\",\"width\":0.5},\"pattern\":{\"fillmode\":\"overlay\",\"size\":10,\"solidity\":0.2}},\"type\":\"barpolar\"}],\"pie\":[{\"automargin\":true,\"type\":\"pie\"}]},\"layout\":{\"autotypenumbers\":\"strict\",\"colorway\":[\"#636efa\",\"#EF553B\",\"#00cc96\",\"#ab63fa\",\"#FFA15A\",\"#19d3f3\",\"#FF6692\",\"#B6E880\",\"#FF97FF\",\"#FECB52\"],\"font\":{\"color\":\"#2a3f5f\"},\"hovermode\":\"closest\",\"hoverlabel\":{\"align\":\"left\"},\"paper_bgcolor\":\"white\",\"plot_bgcolor\":\"#E5ECF6\",\"polar\":{\"bgcolor\":\"#E5ECF6\",\"angularaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"radialaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"}},\"ternary\":{\"bgcolor\":\"#E5ECF6\",\"aaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"baxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"},\"caxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\"}},\"coloraxis\":{\"colorbar\":{\"outlinewidth\":0,\"ticks\":\"\"}},\"colorscale\":{\"sequential\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]],\"sequentialminus\":[[0.0,\"#0d0887\"],[0.1111111111111111,\"#46039f\"],[0.2222222222222222,\"#7201a8\"],[0.3333333333333333,\"#9c179e\"],[0.4444444444444444,\"#bd3786\"],[0.5555555555555556,\"#d8576b\"],[0.6666666666666666,\"#ed7953\"],[0.7777777777777778,\"#fb9f3a\"],[0.8888888888888888,\"#fdca26\"],[1.0,\"#f0f921\"]],\"diverging\":[[0,\"#8e0152\"],[0.1,\"#c51b7d\"],[0.2,\"#de77ae\"],[0.3,\"#f1b6da\"],[0.4,\"#fde0ef\"],[0.5,\"#f7f7f7\"],[0.6,\"#e6f5d0\"],[0.7,\"#b8e186\"],[0.8,\"#7fbc41\"],[0.9,\"#4d9221\"],[1,\"#276419\"]]},\"xaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\",\"title\":{\"standoff\":15},\"zerolinecolor\":\"white\",\"automargin\":true,\"zerolinewidth\":2},\"yaxis\":{\"gridcolor\":\"white\",\"linecolor\":\"white\",\"ticks\":\"\",\"title\":{\"standoff\":15},\"zerolinecolor\":\"white\",\"automargin\":true,\"zerolinewidth\":2},\"scene\":{\"xaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2},\"yaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2},\"zaxis\":{\"backgroundcolor\":\"#E5ECF6\",\"gridcolor\":\"white\",\"linecolor\":\"white\",\"showbackground\":true,\"ticks\":\"\",\"zerolinecolor\":\"white\",\"gridwidth\":2}},\"shapedefaults\":{\"line\":{\"color\":\"#2a3f5f\"}},\"annotationdefaults\":{\"arrowcolor\":\"#2a3f5f\",\"arrowhead\":0,\"arrowwidth\":1},\"geo\":{\"bgcolor\":\"white\",\"landcolor\":\"#E5ECF6\",\"subunitcolor\":\"white\",\"showland\":true,\"showlakes\":true,\"lakecolor\":\"white\"},\"title\":{\"x\":0.05},\"mapbox\":{\"style\":\"light\"}}},\"xaxis\":{\"anchor\":\"y\",\"domain\":[0.0,1.0],\"title\":{\"text\":\"category\"},\"categoryorder\":\"array\",\"categoryarray\":[\"Data\",\"AI\",\"Software\",\"Business\",\"Cloud\",\"Design\",\"IT Operations\",\"Security\"]},\"yaxis\":{\"anchor\":\"x\",\"domain\":[0.0,1.0],\"title\":{\"text\":\"count\"}},\"legend\":{\"title\":{\"text\":\"category\"},\"tracegroupgap\":0},\"title\":{\"text\":\"Synthetic Vacancies by Career Category\"},\"barmode\":\"relative\"},                        {\"responsive\": true}                    ).then(function(){\n",
+              "                            \n",
+              "var gd = document.getElementById('32251beb-7147-4a53-ad84-279b641706c6');\n",
+              "var x = new MutationObserver(function (mutations, observer) {{\n",
+              "        var display = window.getComputedStyle(gd).display;\n",
+              "        if (!display || display === 'none') {{\n",
+              "            console.log([gd, 'removed!']);\n",
+              "            Plotly.purge(gd);\n",
+              "            observer.disconnect();\n",
+              "        }}\n",
+              "}});\n",
+              "\n",
+              "// Listen for the removal of the full notebook cells\n",
+              "var notebookContainer = gd.closest('#notebook-container');\n",
+              "if (notebookContainer) {{\n",
+              "    x.observe(notebookContainer, {childList: true});\n",
+              "}}\n",
+              "\n",
+              "// Listen for the clearing of the current output cell\n",
+              "var outputEl = gd.closest('.output');\n",
+              "if (outputEl) {{\n",
+              "    x.observe(outputEl, {childList: true});\n",
+              "}}\n",
+              "\n",
+              "                        })                };                            </script>        </div>\n",
+              "</body>\n",
+              "</html>"
+            ]
+          },
+          "metadata": {}
         }
-        return r;
-    }
-
-    // Extract word-like tokens using the TOKEN regular expression.
-    private static List<String> tokenize(String text) {
-        List<String> words = new ArrayList<>();
-        Matcher m = TOKEN.matcher(text);
-        while (m.find()) words.add(m.group().replace('’', '\''));
-        return words;
-    }
-
-    // Analyze the entered text, print the result, and save it to history.
-    private static void analyzeAndSave(String text) {
-        Result r = analyze(text);
-        printResult(r);
-        append(r);
-    }
-
-    // Print the sentiment score, detected emotions, and a brief interpretation.
-    private static void printResult(Result r) {
-        System.out.println("\n--- Analysis ---");
-        System.out.println("Time:            " + r.timestamp);
-        System.out.println("Sentiment:       " + r.sentiment + " (score " + round(r.score) + " / -100 to +100)");
-        System.out.println("Primary emotion: " + r.primaryEmotion);
-        System.out.println("Word count:      " + r.words);
-        System.out.println("Matched words:   " + (r.matchedWords.isEmpty() ? "none" : String.join(", ", r.matchedWords)));
-        System.out.println("Top emotions:");
-        int shown = 0;
-        for (Map.Entry<String, Double> e : r.emotions.entrySet()) {
-            if (e.getValue() <= 0) continue;
-            System.out.printf("  %-16s %.1f%n", e.getKey(), e.getValue());
-            if (++shown == 5) break;
+      ],
+      "source": [
+        "fig = px.bar(\n",
+        "    career_recommendations.sort_values(\"Match_Score\"),\n",
+        "    x=\"Match_Score\",y=\"Career\",color=\"Category\",orientation=\"h\",\n",
+        "    title=\"Top Career Recommendations\",labels={\"Match_Score\":\"Match score (%)\"}\n",
+        ")\n",
+        "fig.show()\n",
+        "\n",
+        "if len(job_recommendations):\n",
+        "    px.bar(job_recommendations.sort_values(\"Match_Percent\"),x=\"Match_Percent\",y=\"Title\",\n",
+        "           color=\"Location\",orientation=\"h\",title=\"Recommended Job Matches\").show()\n",
+        "\n",
+        "px.histogram(jobs_df,x=\"category\",color=\"category\",\n",
+        "             title=\"Synthetic Vacancies by Career Category\").show()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "b765ac72",
+      "metadata": {
+        "id": "b765ac72"
+      },
+      "source": [
+        "## 14. Export reports and datasets"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 15,
+      "id": "cb55eec8",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "cb55eec8",
+        "outputId": "0373ef02-e304-408d-a01d-d3119be20f84"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Files exported:\n",
+            "- candidate_career_report.json\n",
+            "- candidate_cluster_model.joblib\n",
+            "- candidate_segments.csv\n",
+            "- career_knowledge_base.csv\n",
+            "- career_recommendations.csv\n",
+            "- career_tfidf_vectorizer.joblib\n",
+            "- job_recommendations.csv\n",
+            "- synthetic_job_vacancies.csv\n",
+            "- synthetic_salary_model.joblib\n"
+          ]
         }
-        System.out.println("Insight: " + insight(r));
-        System.out.println("Reminder: this is a text-based estimate, not a diagnosis.");
-    }
-
-    // Convert the calculated sentiment label into a short explanatory message.
-    private static String insight(Result r) {
-        if (r.sentiment.equals("Positive")) return "Your text contains more positive than negative sentiment clues.";
-        if (r.sentiment.equals("Negative")) return "Your text contains more negative than positive sentiment clues. Consider the context before drawing conclusions.";
-        return "The text appears neutral or has too few clear sentiment clues for a strong result.";
-    }
-
-    // Append one analysis result to the CSV history file.
-    private static void append(Result r) {
-        try {
-            boolean newFile = !Files.exists(LOG) || Files.size(LOG) == 0;
-            try (BufferedWriter out = Files.newBufferedWriter(LOG, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
-                if (newFile) out.write("timestamp,sentiment,score,primary_emotion,word_count,text\n");
-                out.write(csv(r.timestamp) + "," + csv(r.sentiment) + "," + round(r.score) + ","
-                        + csv(r.primaryEmotion) + "," + r.words + "," + csv(r.text) + "\n");
-            }
-        } catch (IOException ex) {
-            System.out.println("Could not save history: " + ex.getMessage());
+      ],
+      "source": [
+        "output_dir = Path(\"career_intelligence_outputs\")\n",
+        "output_dir.mkdir(exist_ok=True)\n",
+        "\n",
+        "career_recommendations.to_csv(output_dir/\"career_recommendations.csv\",index=False)\n",
+        "job_recommendations.to_csv(output_dir/\"job_recommendations.csv\",index=False)\n",
+        "jobs_df.drop(columns=[]).to_csv(output_dir/\"synthetic_job_vacancies.csv\",index=False)\n",
+        "career_df.drop(columns=[\"profile_text\"]).to_csv(output_dir/\"career_knowledge_base.csv\",index=False)\n",
+        "segments.to_csv(output_dir/\"candidate_segments.csv\",index=False)\n",
+        "\n",
+        "report = {\n",
+        "    \"candidate\":candidate[\"name\"],\"target_career\":gap[\"career\"],\n",
+        "    \"skill_coverage_percent\":gap[\"coverage_percent\"],\n",
+        "    \"matched_skills\":gap[\"matched_skills\"],\"missing_skills\":gap[\"missing_skills\"],\n",
+        "    \"learning_roadmap\":gap[\"roadmap\"],\n",
+        "    \"salary_estimate_lpa_synthetic\":round(salary_estimate,2)\n",
+        "}\n",
+        "with open(output_dir/\"candidate_career_report.json\",\"w\",encoding=\"utf-8\") as f:\n",
+        "    json.dump(report,f,indent=2)\n",
+        "\n",
+        "joblib.dump(salary_model,output_dir/\"synthetic_salary_model.joblib\")\n",
+        "joblib.dump(kmeans,output_dir/\"candidate_cluster_model.joblib\")\n",
+        "joblib.dump(tfidf,output_dir/\"career_tfidf_vectorizer.joblib\")\n",
+        "\n",
+        "print(\"Files exported:\")\n",
+        "for file in sorted(output_dir.iterdir()):\n",
+        "    print(\"-\",file.name)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "2b3059e7",
+      "metadata": {
+        "id": "2b3059e7"
+      },
+      "source": [
+        "## 15. Download exported reports as ZIP (Google Colab)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 16,
+      "id": "3dec4c12",
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 34
+        },
+        "id": "3dec4c12",
+        "outputId": "a2433486-efe3-40e9-d08a-e60fb9e664c3"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Created: /content/career_intelligence_outputs.zip\n"
+          ]
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "<IPython.core.display.Javascript object>"
+            ],
+            "application/javascript": [
+              "\n",
+              "    async function download(id, filename, size) {\n",
+              "      if (!google.colab.kernel.accessAllowed) {\n",
+              "        return;\n",
+              "      }\n",
+              "      const div = document.createElement('div');\n",
+              "      const label = document.createElement('label');\n",
+              "      label.textContent = `Downloading \"${filename}\": `;\n",
+              "      div.appendChild(label);\n",
+              "      const progress = document.createElement('progress');\n",
+              "      progress.max = size;\n",
+              "      div.appendChild(progress);\n",
+              "      document.body.appendChild(div);\n",
+              "\n",
+              "      const buffers = [];\n",
+              "      let downloaded = 0;\n",
+              "\n",
+              "      const channel = await google.colab.kernel.comms.open(id);\n",
+              "      // Send a message to notify the kernel that we're ready.\n",
+              "      channel.send({})\n",
+              "\n",
+              "      for await (const message of channel.messages) {\n",
+              "        // Send a message to notify the kernel that we're ready.\n",
+              "        channel.send({})\n",
+              "        if (message.buffers) {\n",
+              "          for (const buffer of message.buffers) {\n",
+              "            buffers.push(buffer);\n",
+              "            downloaded += buffer.byteLength;\n",
+              "            progress.value = downloaded;\n",
+              "          }\n",
+              "        }\n",
+              "      }\n",
+              "      const blob = new Blob(buffers, {type: 'application/binary'});\n",
+              "      const a = document.createElement('a');\n",
+              "      a.href = window.URL.createObjectURL(blob);\n",
+              "      a.download = filename;\n",
+              "      div.appendChild(a);\n",
+              "      a.click();\n",
+              "      div.remove();\n",
+              "    }\n",
+              "  "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "<IPython.core.display.Javascript object>"
+            ],
+            "application/javascript": [
+              "download(\"download_8e40d71b-e624-4ebe-85dc-7521a8f13222\", \"career_intelligence_outputs.zip\", 728200)"
+            ]
+          },
+          "metadata": {}
         }
+      ],
+      "source": [
+        "archive = shutil.make_archive(\"career_intelligence_outputs\",\"zip\",output_dir)\n",
+        "print(\"Created:\",archive)\n",
+        "try:\n",
+        "    from google.colab import files\n",
+        "    files.download(archive)\n",
+        "except ImportError:\n",
+        "    print(\"Download the ZIP from the notebook runtime file browser.\")"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "8c6697fd",
+      "metadata": {
+        "id": "8c6697fd"
+      },
+      "source": [
+        "## 16. Conclusion, limitations and future scope\n",
+        "\n",
+        "### Conclusion\n",
+        "This prototype demonstrates a complete career-intelligence workflow: candidate profiling, skill normalization, career recommendation, text similarity, resume keyword extraction, skill-gap analysis, job matching, salary regression, candidate clustering, visualization and report export.\n",
+        "\n",
+        "### Limitations\n",
+        "- Vacancies and salary labels are synthetic, not real market data.\n",
+        "- Skill matching and TF-IDF similarity are baseline techniques, not validated aptitude assessments.\n",
+        "- Resume parsing detects keywords and does not verify proficiency or understand full context.\n",
+        "- K-Means segments synthetic feature profiles; clusters should not be interpreted as validated human career types.\n",
+        "- Salary metrics only measure performance on the synthetic data distribution.\n",
+        "\n",
+        "### Future enhancements\n",
+        "1. Integrate a licensed and verified job dataset.\n",
+        "2. Add secure PDF/DOCX resume parsing with explicit user consent.\n",
+        "3. Add explainable recommendations and candidate feedback.\n",
+        "4. Evaluate recommendation fairness and accessibility.\n",
+        "5. Build a Streamlit web interface with secure authentication.\n",
+        "6. Add validated occupation and skill taxonomies.\n",
+        "\n",
+        "**Project by:** Subhankar Mahapatra  \n",
+        "**Internship:** YBI Foundation — 45 Days Internship"
+      ]
     }
-
-    // Escape quotes and line breaks so text can be stored safely in a CSV field.
-    private static String csv(String value) {
-        return "\"" + value.replace("\"", "\"\"").replace("\r", " ").replace("\n", " ") + "\"";
+  ],
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
     }
-
-    // Read saved CSV records and return each row as an array of fields.
-    private static List<String[]> readHistory() {
-        List<String[]> rows = new ArrayList<>();
-        if (!Files.exists(LOG)) return rows;
-        try {
-            List<String> lines = Files.readAllLines(LOG, StandardCharsets.UTF_8);
-            for (int i = 1; i < lines.size(); i++) {
-                List<String> fields = parseCsvLine(lines.get(i));
-                if (fields.size() >= 6) rows.add(fields.toArray(new String[0]));
-            }
-        } catch (IOException ex) {
-            System.out.println("Could not read history: " + ex.getMessage());
-        }
-        return rows;
-    }
-
-    // Parse a CSV line while respecting commas inside quoted fields.
-    private static List<String> parseCsvLine(String line) {
-        List<String> fields = new ArrayList<>();
-        StringBuilder field = new StringBuilder();
-        boolean quoted = false;
-        for (int i = 0; i < line.length(); i++) {
-            char c = line.charAt(i);
-            if (c == '"') {
-                if (quoted && i + 1 < line.length() && line.charAt(i + 1) == '"') {
-                    field.append('"'); i++;
-                } else quoted = !quoted;
-            } else if (c == ',' && !quoted) {
-                fields.add(field.toString()); field.setLength(0);
-            } else field.append(c);
-        }
-        fields.add(field.toString());
-        return fields;
-    }
-
-    // Display up to the ten most recent saved analyses.
-    private static void showHistory() {
-        List<String[]> rows = readHistory();
-        if (rows.isEmpty()) { System.out.println("No saved analyses yet."); return; }
-        int start = Math.max(0, rows.size() - 10);
-        System.out.println("\nRecent analyses (latest 10):");
-        for (int i = start; i < rows.size(); i++) {
-            String[] r = rows.get(i);
-            System.out.printf("%s | %-8s | %6s | %-14s | %s%n",
-                    r[0], r[1], r[2], r[3], shorten(r[5], 60));
-        }
-    }
-
-    // Display only the records whose timestamps match today's date.
-    private static void showToday() {
-        String today = LocalDate.now().toString();
-        List<String[]> rows = readHistory();
-        int found = 0;
-
-        System.out.println("\\nAnalyses saved today (" + today + "):");
-        for (String[] row : rows) {
-            if (row.length >= 6 && row[0].startsWith(today)) {
-                System.out.printf("%s | %-8s | %6s | %-14s | %s%n",
-                        row[0], row[1], row[2], row[3], shorten(row[5], 60));
-                found++;
-            }
-        }
-
-        if (found == 0) {
-            System.out.println("No analyses saved today.");
-        } else {
-            System.out.println("Today's total: " + found);
-        }
-    }
-
-    // Count positive, negative, and neutral records and calculate the average score.
-    private static void showStats() {
-        List<String[]> rows = readHistory();
-        if (rows.isEmpty()) { System.out.println("No saved analyses yet."); return; }
-        int positive = 0, negative = 0, neutral = 0;
-        double sum = 0;
-        for (String[] row : rows) {
-            try {
-                double score = Double.parseDouble(row[2]);
-                sum += score;
-                if (score > 2) positive++; else if (score < -2) negative++; else neutral++;
-            } catch (NumberFormatException ignored) { }
-        }
-        System.out.println("\n--- History statistics ---");
-        System.out.println("Total entries: " + rows.size());
-        System.out.println("Positive: " + positive + " | Negative: " + negative + " | Neutral: " + neutral);
-        System.out.println("Average sentiment score: " + round(sum / rows.size()));
-        System.out.println("This summarizes text entries, not a person's mental-health status.");
-    }
-
-    // Search saved text entries for a user-supplied keyword.
-    private static void searchHistory() {
-        System.out.print("Keyword to search > ");
-        String term = IN.nextLine().trim().toLowerCase(Locale.ROOT);
-        if (term.isEmpty()) return;
-        int found = 0;
-        for (String[] row : readHistory()) {
-            if (row[5].toLowerCase(Locale.ROOT).contains(term)) {
-                System.out.printf("%s | %-8s | %6s | %s%n", row[0], row[1], row[2], row[5]);
-                found++;
-            }
-        }
-        System.out.println("Matches: " + found);
-    }
-
-    // Analyze two texts and compare their sentiment and emotion results.
-    private static void compareTexts() {
-        System.out.print("Text A > ");
-        String aText = IN.nextLine().trim();
-        System.out.print("Text B > ");
-        String bText = IN.nextLine().trim();
-        if (aText.isEmpty() || bText.isEmpty()) { System.out.println("Enter both texts."); return; }
-        Result a = analyze(aText), b = analyze(bText);
-        System.out.println("\nComparison");
-        System.out.printf("%-20s | %-18s | %-18s%n", "Metric", "Text A", "Text B");
-        System.out.println("----------------------------------------------------------");
-        System.out.printf("%-20s | %-18s | %-18s%n", "Sentiment", a.sentiment, b.sentiment);
-        System.out.printf("%-20s | %-18.1f | %-18.1f%n", "Score", a.score, b.score);
-        System.out.printf("%-20s | %-18s | %-18s%n", "Primary emotion", a.primaryEmotion, b.primaryEmotion);
-        System.out.printf("%-20s | %-18d | %-18d%n", "Word count", a.words, b.words);
-        System.out.printf("Score change (B - A): %.1f points%n", b.score - a.score);
-    }
-
-    // Add a custom word, sentiment weight, and optional emotion category.
-    private static void trainWord() {
-        System.out.print("New single word (no spaces) > ");
-        String word = IN.nextLine().trim().toLowerCase(Locale.ROOT);
-        if (word.isEmpty() || word.contains(" ") || !word.matches("[\\p{L}\\p{N}'’-]+")) {
-            System.out.println("Enter one valid word only."); return;
-        }
-        System.out.print("Sentiment weight (-5 to +5) > ");
-        double weight;
-        try {
-            weight = Double.parseDouble(IN.nextLine().trim());
-            if (!Double.isFinite(weight) || weight < -5 || weight > 5) throw new NumberFormatException();
-        } catch (NumberFormatException ex) {
-            System.out.println("Enter a number from -5 to +5."); return;
-        }
-        System.out.println("Emotion options: Happiness, Sadness, Anger, Fear, Love, Trust, Stress, Gratitude, Confidence, Hope, Confusion, Curiosity, Disappointment, Calmness, Surprise, Boredom, Pride, Jealousy, Loneliness, Disgust");
-        System.out.print("Emotion (or Enter to skip) > ");
-        String emotion = IN.nextLine().trim();
-        if (!emotion.isEmpty() && !Arrays.asList("Happiness", "Sadness", "Anger", "Fear", "Love", "Trust", "Stress", "Gratitude", "Confidence", "Hope", "Confusion", "Curiosity", "Disappointment", "Calmness", "Surprise", "Boredom", "Pride", "Jealousy", "Loneliness", "Disgust").contains(emotion)) {
-            System.out.println("Unknown emotion; word saved for sentiment only.");
-            emotion = "";
-        }
-        SENTIMENT.put(word, weight);
-        if (!emotion.isEmpty()) EMOTION_BY_WORD.put(word, emotion);
-        try {
-            Files.write(CUSTOM_LEXICON, Collections.singletonList(word + "," + weight + "," + emotion),
-                    StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            System.out.println("Saved custom word: " + word);
-        } catch (IOException ex) {
-            System.out.println("Word added for this session but could not be saved: " + ex.getMessage());
-        }
-    }
-
-    // Load custom words from disk when the program starts.
-    private static void loadCustomLexicon() {
-        if (!Files.exists(CUSTOM_LEXICON)) return;
-        try {
-            for (String line : Files.readAllLines(CUSTOM_LEXICON, StandardCharsets.UTF_8)) {
-                String[] p = line.split(",", -1);
-                if (p.length < 2) continue;
-                try {
-                    String word = p[0].trim().toLowerCase(Locale.ROOT);
-                    double weight = Double.parseDouble(p[1].trim());
-                    if (word.isEmpty() || !Double.isFinite(weight) || weight < -5 || weight > 5) continue;
-                    SENTIMENT.put(word, weight);
-                    if (p.length >= 3 && !p[2].trim().isEmpty()) EMOTION_BY_WORD.put(word, p[2].trim());
-                } catch (NumberFormatException ignored) { }
-            }
-        } catch (IOException ex) {
-            System.out.println("Could not load custom lexicon: " + ex.getMessage());
-        }
-    }
-
-    // Analyze each non-empty line in a user-selected UTF-8 text file.
-    private static void batchAnalyze() {
-        System.out.print("Path to UTF-8 text file > ");
-        String path = IN.nextLine().trim();
-        if (path.isEmpty()) return;
-        Path file = Paths.get(path);
-        if (!Files.isRegularFile(file)) { System.out.println("File not found."); return; }
-        try {
-            int count = 0;
-            for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-                if (line.trim().isEmpty()) continue;
-                Result r = analyze(line.trim());
-                append(r);
-                System.out.printf("%-8s %6.1f %-14s %s%n", r.sentiment, r.score, r.primaryEmotion, shorten(r.text, 70));
-                count++;
-            }
-            System.out.println("Batch complete. Saved " + count + " analyses.");
-        } catch (IOException ex) {
-            System.out.println("Could not read file: " + ex.getMessage());
-        }
-    }
-
-    // Build an HTML dashboard summarizing the saved analysis history.
-    private static void exportDashboard() {
-        List<String[]> rows = readHistory();
-        if (rows.isEmpty()) { System.out.println("No history to export."); return; }
-        int pos = 0, neg = 0, neu = 0;
-        double total = 0;
-        StringBuilder table = new StringBuilder();
-        for (String[] r : rows) {
-            try {
-                double score = Double.parseDouble(r[2]);
-                total += score;
-                if (score > 2) pos++; else if (score < -2) neg++; else neu++;
-                table.append("<tr><td>").append(html(r[0])).append("</td><td>")
-                     .append(html(r[1])).append("</td><td>").append(score).append("</td><td>")
-                     .append(html(r[3])).append("</td><td>").append(html(r[5])).append("</td></tr>");
-            } catch (NumberFormatException ignored) { }
-        }
-        String page = "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-                + "<meta name='viewport' content='width=device-width,initial-scale=1'><title>Emotion Insight Dashboard</title>"
-                + "<style>body{font-family:Arial,sans-serif;max-width:1100px;margin:30px auto;padding:0 16px;background:#f4f6fb;color:#172033}"
-                + ".cards{display:flex;gap:12px;flex-wrap:wrap}.card{background:white;padding:18px;border-radius:10px;flex:1;min-width:150px;box-shadow:0 2px 8px #0001}"
-                + "table{width:100%;border-collapse:collapse;background:white;margin-top:20px}th,td{padding:10px;text-align:left;border-bottom:1px solid #ddd;overflow-wrap:anywhere}"
-                + "th{background:#e8edf7} .note{color:#586174;font-size:.9rem}</style></head><body>"
-                + "<h1>Emotion Insight Engine 8.0</h1><p class='note'>Rule-based educational estimates; not a clinical assessment.</p><div class='cards'>"
-                + card("Total entries", rows.size()) + card("Positive", pos) + card("Negative", neg) + card("Neutral", neu)
-                + card("Average score", round(total / Math.max(1, rows.size()))) + "</div>"
-                + "<table><thead><tr><th>Timestamp</th><th>Sentiment</th><th>Score</th><th>Primary emotion</th><th>Text</th></tr></thead><tbody>"
-                + table + "</tbody></table></body></html>";
-        try {
-            Files.write(DASHBOARD, page.getBytes(StandardCharsets.UTF_8));
-            System.out.println("Dashboard exported to: " + DASHBOARD.toAbsolutePath());
-        } catch (IOException ex) {
-            System.out.println("Could not export dashboard: " + ex.getMessage());
-        }
-    }
-
-    // Create one summary card for the HTML dashboard.
-    private static String card(String title, Object value) {
-        return "<div class='card'><div>" + html(title) + "</div><h2>" + html(String.valueOf(value)) + "</h2></div>";
-    }
-
-    // Delete the saved history only after the user confirms the action.
-    private static void clearHistory() {
-        System.out.print("Delete all saved analysis history? Type YES to confirm > ");
-        if (!IN.nextLine().trim().equals("YES")) { System.out.println("Cancelled."); return; }
-        try {
-            Files.deleteIfExists(LOG);
-            System.out.println("History deleted. Custom lexicon was kept.");
-        } catch (IOException ex) {
-            System.out.println("Could not delete history: " + ex.getMessage());
-        }
-    }
-
-    // Escape HTML special characters to prevent text from breaking the page markup.
-    private static String html(String s) {
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                .replace("\"", "&quot;").replace("'", "&#39;");
-    }
-
-    // Shorten long text so it fits neatly in history listings.
-    private static String shorten(String s, int max) {
-        return s.length() <= max ? s : s.substring(0, max - 3) + "...";
-    }
-
-    // Round a numeric value to one decimal place.
-    private static double round(double n) {
-        return Math.round(n * 10.0) / 10.0;
-    }
-
-    // Create the CSV history file with a header if it does not exist.
-    private static void ensureLog() {
-        if (Files.exists(LOG)) return;
-        try {
-            Files.write(LOG, Collections.singletonList("timestamp,sentiment,score,primary_emotion,word_count,text"),
-                    StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
-        } catch (IOException ex) {
-            System.out.println("History file will be created when possible: " + ex.getMessage());
-        }
-    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
 }
